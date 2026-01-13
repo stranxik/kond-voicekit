@@ -9,8 +9,9 @@
 
 # @kond/voicekit
 
-> "Donnez de la voix a votre agent IA"
+> "Give your AI agent a voice"
 > Voice SDK for AI agents — STT, TTS, Turn Detection ML
+> **Languages:** English, French
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -254,7 +255,7 @@ const turnDetector = useTurnDetector({ type: 'auto' });
 │  ✓ TTS Queue + Prefetching (gapless audio)                              │
 │  ✓ Native barge-in support                                               │
 │  ✓ 9-state FSM (our orchestration)                                       │
-│  ✓ React-first                                                           │
+│  ✓ Framework-agnostic (React bindings included)                          │
 │  ✓ Open source                                                           │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -330,7 +331,7 @@ MIT — [KOND](https://kond.studio)
 │                                                                          │
 │              @kond/voicekit — built with care                            │
 │                                                                          │
-│         Voice SDK for AI agents. React-first. Open source.              │
+│      Voice SDK for AI agents. Framework-agnostic. Open source.          │
 │                                                                          │
 │                           2025                                           │
 │                                                                          │
