@@ -320,8 +320,7 @@ COMING SOON
 
 ## Documentation
 
-- **Full docs:** [VOICEKIT.md](https://github.com/stranxik/kond-voicekit/blob/main/docs/SDK/VOICEKIT.md)
-- **Architecture:** [ARCHITECTURE.md](https://github.com/stranxik/kond-voicekit/blob/main/ARCHITECTURE.md)
+Full documentation: [kond.studio/docs/voicekit](https://kond.studio/docs/voicekit) *(coming soon)*
 
 ---
 
