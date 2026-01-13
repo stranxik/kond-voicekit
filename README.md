@@ -1,94 +1,95 @@
 ```
-██╗   ██╗ ██████╗ ██╗ ██████╗███████╗██╗  ██╗██╗████████╗
-██║   ██║██╔═══██╗██║██╔════╝██╔════╝██║ ██╔╝██║╚══██╔══╝
-██║   ██║██║   ██║██║██║     █████╗  █████╔╝ ██║   ██║
-╚██╗ ██╔╝██║   ██║██║██║     ██╔══╝  ██╔═██╗ ██║   ██║
- ╚████╔╝ ╚██████╔╝██║╚██████╗███████╗██║  ██╗██║   ██║
-  ╚═══╝   ╚═════╝ ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚═╝   ╚═╝
+ ██╗  ██╗ ██████╗ ███╗   ██╗██████╗
+ ██║ ██╔╝██╔═══██╗████╗  ██║██╔══██╗
+ █████╔╝ ██║   ██║██╔██╗ ██║██║  ██║
+ ██╔═██╗ ██║   ██║██║╚██╗██║██║  ██║
+ ██║  ██╗╚██████╔╝██║ ╚████║██████╔╝
+ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═════╝
+
+ ██╗   ██╗ ██████╗ ██╗ ██████╗███████╗██╗  ██╗██╗████████╗
+ ██║   ██║██╔═══██╗██║██╔════╝██╔════╝██║ ██╔╝██║╚══██╔══╝
+ ██║   ██║██║   ██║██║██║     █████╗  █████╔╝ ██║   ██║
+ ╚██╗ ██╔╝██║   ██║██║██║     ██╔══╝  ██╔═██╗ ██║   ██║
+  ╚████╔╝ ╚██████╔╝██║╚██████╗███████╗██║  ██╗██║   ██║
+   ╚═══╝   ╚═════╝ ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚═╝   ╚═╝
 ```
 
 # @kond/voicekit
 
-> "Give your AI agent a voice"
+> **"Give your AI agent a voice"**
+>
 > Voice SDK for AI agents — STT, TTS, Turn Detection ML
+>
 > **Languages:** English, French
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  STATUS                                                                   │
-├──────────────────────────────────────────────────────────────────────────┤
-│  Self-hosted    │ ✓ Available      │ Bring your own endpoints            │
-│  Managed        │ ○ Roadmap        │ One API key, everything included    │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
 ---
 
-## THE PROBLEM
+## What is VoiceKit?
 
-Adding voice to an AI agent is **complex and expensive**:
+VoiceKit is not just code. It's **orchestration**.
 
-```
-Developer wants to make their agent speak
-        ↓
-❌ Integrate Deepgram/Whisper for STT
-❌ Manage WebSocket + audio buffers
-❌ Detect when user finished speaking (VAD, end-of-turn)
-❌ Avoid false positives ("uh", "hmm", short silences)
-❌ Integrate ElevenLabs/OpenAI for TTS
-❌ Handle gaps between sentences (gapless audio)
-❌ Support barge-in (user interrupts)
-❌ Optimize latency (prefetching, early trigger)
-        ↓
-= 2-3 months dev, audio expertise, subtle bugs
-```
-
----
-
-## THE SOLUTION
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│                    WITHOUT VOICEKIT vs WITH VOICEKIT                      │
-├──────────────────────────────────────────────────────────────────────────┤
-│  Without VoiceKit           │  With VoiceKit                             │
-│  ───────────────────────────┼─────────────────────────────────────────── │
-│  2-3 months dev             │  1 day integration                         │
-│  Subtle VAD/timing bugs     │  Tested on 1000+ conversations             │
-│  3-5s latency               │  < 1.5s latency                            │
-│  Gapless audio to build     │  Gapless audio native                      │
-│  Turn detection to build    │  ML turn detection included                │
-│  Audio expertise required   │  Zero audio knowledge needed               │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## WHAT'S INSIDE
-
-This is not just code. It's **orchestration**.
-
-Anyone can connect Deepgram + ElevenLabs.
-Nobody wants to handle:
-
-```
-FEATURES INCLUDED
-─────────────────
-├─ 9-state conversation FSM (complete with edge cases)
-├─ VAD cooldown (avoid false positives on short silences)
-├─ Barge-in (natural AI interruption)
-├─ Early trigger (respond before complete sentence)
-├─ Backchannels ("mh", "yeah" → skip LLM, no response)
-├─ TTS queue with prefetch (audio without gaps)
-├─ ML Turn Detection (LiveKit ONNX, client-side)
-└─ Sentence accumulator (streaming chunking for progressive TTS)
-```
+Anyone can connect Deepgram + ElevenLabs. Nobody wants to spend months handling the edge cases: VAD cooldowns, barge-in detection, gapless audio queuing, backchannel filtering ("mh", "yeah"), turn-taking ML...
 
 **VoiceKit = months of R&D condensed into one import.**
 
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Developer wants voice for their AI agent                                │
+│                                                                          │
+│  WITHOUT VOICEKIT                    WITH VOICEKIT                       │
+│  ─────────────────                   ─────────────                       │
+│  ❌ Integrate Deepgram/Whisper       ✓ One import                        │
+│  ❌ WebSocket + audio buffers        ✓ Handled                           │
+│  ❌ End-of-turn detection            ✓ ML-based (39% better)             │
+│  ❌ False positives ("uh", "hmm")    ✓ Backchannel filtering             │
+│  ❌ ElevenLabs/OpenAI TTS            ✓ Abstracted                        │
+│  ❌ Gaps between sentences           ✓ Gapless queue + prefetch          │
+│  ❌ Barge-in support                 ✓ Native                            │
+│  ❌ Latency optimization             ✓ < 1.5s end-to-end                 │
+│  ─────────────────────────────────────────────────────────────────────── │
+│  = 2-3 months dev                    = 1 day integration                 │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
 ---
 
-## INSTALLATION
+## Status
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  MODE            │ STATUS           │ DESCRIPTION                        │
+├──────────────────┼──────────────────┼────────────────────────────────────┤
+│  Self-hosted     │ ✓ Available      │ Bring your own endpoints           │
+│  Managed Service │ ○ Roadmap        │ One API key, everything included   │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+**Today:** Self-hosted mode. You provide your own STT/TTS endpoints (Deepgram, ElevenLabs, etc.).
+
+**Tomorrow:** Managed service with a single KOND API key — STT + TTS + ML included, zero config.
+
+---
+
+## Features
+
+```
+WHAT'S INCLUDED
+───────────────
+├─ 9-state conversation FSM (complete with edge cases)
+├─ VAD cooldown (avoid false positives on short silences)
+├─ Barge-in (natural user interruption of AI)
+├─ Early trigger (respond before utterance complete)
+├─ Backchannels ("mh", "yeah", "ouais" → skip LLM, no response)
+├─ TTS queue with prefetch (audio without gaps between sentences)
+├─ ML Turn Detection (LiveKit ONNX model, runs client-side)
+├─ Sentence accumulator (streaming chunking for progressive TTS)
+├─ Framework-agnostic core (vanilla JS)
+└─ React bindings included (hooks + components)
+```
+
+---
+
+## Installation
 
 ```bash
 npm install @kond/voicekit
@@ -98,7 +99,7 @@ pnpm add @kond/voicekit
 
 ---
 
-## QUICK START
+## Quick Start
 
 ### React
 
@@ -122,7 +123,7 @@ function VoiceChat() {
 }
 ```
 
-### Vanilla JS
+### Vanilla JavaScript
 
 ```typescript
 import { VoiceKit } from '@kond/voicekit';
@@ -140,7 +141,7 @@ await voice.start();
 
 ---
 
-## SELF-HOSTED MODE (Current)
+## Self-Hosted Mode
 
 You provide your own STT/TTS endpoints:
 
@@ -150,7 +151,7 @@ const voice = new VoiceKit({
   endpoints: {
     sttWebSocket: '/api/voice/stt',     // Your Deepgram proxy
     ttsStream: '/api/voice/tts',         // Your ElevenLabs proxy
-    turnDetector: '/api/voice/turn',     // Turn detection API
+    turnDetector: '/api/voice/turn',     // Turn detection API (optional)
   },
   locale: 'fr',
   onTranscript: async (text) => {
@@ -164,17 +165,19 @@ const voice = new VoiceKit({
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ENDPOINT                │ TYPE          │ DESCRIPTION                   │
-├──────────────────────────┼───────────────┼───────────────────────────────┤
-│  /api/voice/stt          │ WebSocket     │ Deepgram STT proxy            │
-│  /api/voice/tts          │ HTTP Stream   │ ElevenLabs TTS proxy          │
-│  /api/voice/token        │ HTTP GET      │ Auth token (optional)         │
+│  ENDPOINT              │ TYPE          │ DESCRIPTION                     │
+├────────────────────────┼───────────────┼─────────────────────────────────┤
+│  /api/voice/stt        │ WebSocket     │ Proxy to Deepgram STT           │
+│  /api/voice/tts        │ HTTP Stream   │ Proxy to ElevenLabs TTS         │
+│  /api/voice/token      │ HTTP GET      │ Auth token (optional)           │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+VoiceKit is **backend-agnostic**. Works with Next.js, Hono, Express, Fastify, Cloudflare Workers, Deno, Bun...
+
 ---
 
-## COMPOSABLE HOOKS
+## Composable Hooks
 
 For custom orchestration, use granular hooks:
 
@@ -197,99 +200,57 @@ const turnDetector = useTurnDetector({ type: 'auto' });
 
 ---
 
-## ARCHITECTURE
+## Architecture
 
 ```
 @kond/voicekit/
-├─ core/
-│   ├─ turn-manager.ts        # Signal fusion engine
-│   ├─ tts-queue.ts           # Sentence queue + prefetch
-│   ├─ tts-streaming.ts       # Web Audio playback
-│   └─ state-machine.ts       # 9-state conversation FSM
+├─ core/                       # Framework-agnostic engine
+│   ├─ turn-manager.ts         # Signal fusion (VAD + transcript + ML)
+│   ├─ tts-queue.ts            # Sentence queue + prefetch
+│   ├─ tts-streaming.ts        # Web Audio playback
+│   ├─ eou-detector.ts         # End-of-utterance detection
+│   └─ sentence-chunker.ts     # Streaming text → sentences
 │
-├─ stt/
-│   ├─ deepgram-adapter.ts    # Deepgram STT
-│   └─ whisper-adapter.ts     # Local Whisper (future)
+├─ adapters/
+│   ├─ stt/deepgram.ts         # Deepgram STT adapter
+│   ├─ tts/fetch-tts.ts        # Generic fetch-based TTS
+│   ├─ vad/silero-vad.ts       # Silero WASM VAD
+│   └─ turn-detector/
+│       ├─ cloud.ts            # Remote ML API
+│       ├─ onnx.ts             # Local ONNX (LiveKit model)
+│       └─ heuristic.ts        # Rule-based fallback
 │
-├─ tts/
-│   ├─ elevenlabs-adapter.ts  # ElevenLabs TTS
-│   ├─ openai-adapter.ts      # OpenAI TTS
-│   └─ piper-adapter.ts       # Local Piper (future)
-│
-├─ vad/
-│   ├─ silero-vad.ts          # Silero WASM
-│   └─ rms-vad.ts             # Simple RMS fallback
-│
-├─ ml/
-│   ├─ cloud-detector.ts      # Remote ML
-│   ├─ onnx-detector.ts       # Local ONNX
-│   └─ heuristic-detector.ts  # Rule-based fallback
+├─ ports/                      # Interfaces (dependency inversion)
+│   ├─ stt.ts
+│   ├─ tts.ts
+│   ├─ vad.ts
+│   └─ turn-detector.ts
 │
 ├─ react/                      # React bindings
-│   ├─ use-voice-kit.ts
-│   └─ VoiceButton.tsx
+│   ├─ use-voice-kit.ts        # Main hook
+│   ├─ use-voice-conversation.ts
+│   ├─ hooks/                  # Granular hooks
+│   └─ VoiceButton.tsx         # Ready-to-use component
 │
-└─ index.ts                    # VoiceKit class
+├─ voicekit.ts                 # VoiceKit class (vanilla JS)
+└─ index.ts                    # Exports
 ```
 
 ---
 
-## VS COMPETITION
+## LLM-Agnostic
+
+VoiceKit is **independent of your LLM**. You bring your own:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  SOLUTION        │ TYPE       │ STRENGTH          │ WEAKNESS             │
-├──────────────────┼────────────┼───────────────────┼──────────────────────┤
-│  LiveKit Agents  │ SDK Python │ Turn detection ML │ No React, no TTS Q   │
-│  Vapi.ai         │ SaaS       │ Turnkey           │ Closed, expensive    │
-│  Retell.ai       │ SaaS       │ UX polish         │ Closed, LLM lock-in  │
-│  OpenAI Realtime │ API        │ Low latency       │ GPT-4 only, expensive│
-│  Hume.ai         │ SaaS       │ Emotion           │ Very expensive       │
-├──────────────────┴────────────┴───────────────────┴──────────────────────┤
-│                                                                          │
-│  @kond/voicekit                                                          │
-│  ───────────────                                                         │
-│  ✓ ONE API → everything works                                            │
-│  ✓ ML Turn Detection included (LiveKit ONNX, client-side)               │
-│  ✓ FR/EN heuristics for backchannels ("mh", "ouais", "ok")              │
-│  ✓ TTS Queue + Prefetching (gapless audio)                              │
-│  ✓ Native barge-in support                                               │
-│  ✓ 9-state FSM (our orchestration)                                       │
-│  ✓ Framework-agnostic (React bindings included)                          │
-│  ✓ Open source                                                           │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## USE CASES
-
-```
-APPLICATIONS
-────────────
-├─ Voice chatbots      — Customer support, assistants
-├─ Educational apps    — AI tutors, language learning
-├─ Accessibility       — Voice interfaces for visually impaired
-├─ Gaming              — NPCs that talk with players
-├─ Prototyping         — Test voice-first ideas quickly
-└─ Autonomous agents   — Agents that call APIs and speak
-```
-
----
-
-## LLM-AGNOSTIC
-
-VoiceKit is **independent of LLM**. You bring your own:
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  PROVIDED BY KOND              │  PROVIDED BY YOU                        │
+│  PROVIDED BY VOICEKIT          │  PROVIDED BY YOU                        │
 ├────────────────────────────────┼─────────────────────────────────────────┤
-│  ✓ STT (Deepgram)              │  ✓ Your LLM (Claude/GPT/Gemini/Llama)  │
-│  ✓ TTS (ElevenLabs)            │  ✓ Your LLM API key                    │
+│  ✓ STT (Deepgram adapter)      │  ✓ Your LLM (Claude, GPT, Gemini...)   │
+│  ✓ TTS (ElevenLabs adapter)    │  ✓ Your LLM API key                    │
 │  ✓ Turn Detection ML           │  ✓ Your business logic                 │
-│  ✓ State Machine 9 states      │                                         │
+│  ✓ 9-state conversation FSM    │  ✓ Your backend endpoints              │
+│  ✓ Audio orchestration         │                                         │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -298,42 +259,96 @@ The `onTranscript` callback is a black box for us.
 
 ---
 
-## ROADMAP
+## vs Competition
 
 ```
-MANAGED SERVICE (Coming)
-────────────────────────
+┌──────────────────────────────────────────────────────────────────────────┐
+│  SOLUTION        │ TYPE       │ STRENGTH            │ WEAKNESS           │
+├──────────────────┼────────────┼─────────────────────┼────────────────────┤
+│  LiveKit Agents  │ SDK Python │ Turn detection ML   │ No JS, no TTS Q    │
+│  Vapi.ai         │ SaaS       │ Turnkey             │ Closed, expensive  │
+│  Retell.ai       │ SaaS       │ UX polish           │ Closed, LLM lock-in│
+│  OpenAI Realtime │ API        │ Low latency         │ GPT-4 only, $$$    │
+│  Hume.ai         │ SaaS       │ Emotion detection   │ Very expensive     │
+├──────────────────┴────────────┴─────────────────────┴────────────────────┤
+│                                                                          │
+│  @kond/voicekit                                                          │
+│  ───────────────                                                         │
+│  ✓ ML Turn Detection (LiveKit ONNX, client-side)                        │
+│  ✓ FR/EN backchannels ("mh", "ouais", "ok")                             │
+│  ✓ TTS Queue + Prefetching (gapless audio)                              │
+│  ✓ Native barge-in support                                               │
+│  ✓ 9-state FSM (battle-tested orchestration)                            │
+│  ✓ Framework-agnostic (React bindings included)                          │
+│  ✓ Open source (MIT license)                                             │
+│  ✓ LLM-agnostic (use any model)                                          │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Use Cases
+
+```
+APPLICATIONS
+────────────
+├─ Voice chatbots       — Customer support, virtual assistants
+├─ Educational apps     — AI tutors, language learning
+├─ Accessibility        — Voice interfaces for visually impaired
+├─ Gaming               — NPCs that talk with players
+├─ Prototyping          — Test voice-first ideas in a day
+└─ Autonomous agents    — Agents that call APIs and report back vocally
+```
+
+---
+
+## Roadmap: Managed Service
+
+```
+COMING SOON
+───────────
 ├─ One API key → STT + TTS + ML included
 ├─ Free tier: 100 min/month
 ├─ Then: $0.05/min
-├─ ElevenLabs voices of your choice
-└─ Zero config, zero accounts to create
+├─ ElevenLabs voices catalog
+├─ Zero config, zero external accounts
+└─ Same SDK API — just add your key
 ```
 
 ---
 
-## DOCUMENTATION
+## Documentation
 
-Full documentation: [docs/SDK/VOICEKIT.md](https://github.com/stranxik/kond-voicekit/blob/main/docs/SDK/VOICEKIT.md)
+- **Full docs:** [VOICEKIT.md](https://github.com/stranxik/kond-voicekit/blob/main/docs/SDK/VOICEKIT.md)
+- **Architecture:** [ARCHITECTURE.md](https://github.com/stranxik/kond-voicekit/blob/main/ARCHITECTURE.md)
 
 ---
 
-## LICENSE
+## License
 
-MIT — [KOND](https://kond.studio)
+MIT — see [LICENSE](./LICENSE)
+
+---
+
+## Contributing
+
+VoiceKit is extracted from [KOND](https://kond.studio), a personal AI companion.
+
+Issues and PRs welcome on [GitHub](https://github.com/stranxik/kond-voicekit).
 
 ---
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                                                                          │
-│                        [ ^_^ ]                                           │
+│                           [ ^_^ ]                                        │
 │                                                                          │
-│              @kond/voicekit — built with care                            │
+│                @kond/voicekit — built with care                          │
 │                                                                          │
-│      Voice SDK for AI agents. Framework-agnostic. Open source.          │
+│       Voice SDK for AI agents. Framework-agnostic. Open source.         │
 │                                                                          │
-│                           2025                                           │
+│                            2025                                          │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
