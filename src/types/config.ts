@@ -54,8 +54,9 @@ export interface VoiceKitError {
 export interface VoiceKitConfig {
   // ============= Authentication =============
   /**
-   * KOND API key for managed SDK (vk_live_... or vk_test_...)
-   * Use this for the simplest setup with KOND platform
+   * VoiceKit API key (vk_xxx)
+   * Get your key at: https://kond.studio/voicekit/keys
+   * Free tier: 100 min/month of cloud turn detection
    */
   apiKey?: string;
 
@@ -64,6 +65,12 @@ export interface VoiceKitConfig {
    * Return a JWT or API key for authenticating with your services
    */
   getAuthToken?: () => Promise<string>;
+
+  /**
+   * Callback when free quota is exceeded (402 response)
+   * Use this to show an upgrade prompt to users
+   */
+  onQuotaExceeded?: (upgradeUrl: string) => void;
 
   // ============= Voice Settings =============
   /**

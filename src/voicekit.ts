@@ -198,24 +198,26 @@ export class VoiceKit {
       detectBackchannels: this.config.turnDetection?.detectBackchannels ?? true,
     };
 
+    // Cloud detector options (apiKey takes precedence over getAuthToken)
+    const cloudOptions = {
+      ...baseConfig,
+      apiKey: this.config.apiKey,
+      getAuthToken: this.config.getAuthToken,
+      onQuotaExceeded: this.config.onQuotaExceeded,
+    };
+
     switch (type) {
       case "cloud":
-        return createCloudTurnDetector({
-          ...baseConfig,
-          getAuthToken: this.config.getAuthToken,
-        });
+        return createCloudTurnDetector(cloudOptions);
       case "onnx":
         return createOnnxTurnDetector(baseConfig);
       case "heuristic":
         return createHeuristicTurnDetector(baseConfig);
       case "auto":
       default:
-        // Auto: try cloud if auth available, otherwise heuristic
-        if (this.config.getAuthToken || this.config.endpoints?.turnDetector) {
-          return createCloudTurnDetector({
-            ...baseConfig,
-            getAuthToken: this.config.getAuthToken,
-          });
+        // Auto: try cloud if apiKey or auth available, otherwise heuristic
+        if (this.config.apiKey || this.config.getAuthToken || this.config.endpoints?.turnDetector) {
+          return createCloudTurnDetector(cloudOptions);
         }
         return createHeuristicTurnDetector(baseConfig);
     }

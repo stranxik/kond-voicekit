@@ -56,8 +56,12 @@ export interface CloudTurnDetectorOptions extends TurnDetectorConfig {
   apiUrl?: string;
   /** Token endpoint URL (optional override) */
   tokenUrl?: string;
+  /** VoiceKit API key (vk_xxx) - takes precedence over getAuthToken */
+  apiKey?: string;
   /** Custom auth token provider (alternative to tokenUrl) */
   getAuthToken?: () => Promise<string>;
+  /** Callback when quota exceeded (402 response) */
+  onQuotaExceeded?: (upgradeUrl: string) => void;
   /** Request timeout (ms) */
   timeoutMs?: number;
   /** Max retries on failure */
@@ -254,7 +258,10 @@ export class CloudTurnDetector implements TurnDetectorProvider {
       "Content-Type": "application/json",
     };
 
-    if (this.jwtToken) {
+    // Use API key if provided (VoiceKit managed), otherwise JWT
+    if (this.options.apiKey) {
+      headers["Authorization"] = `Bearer ${this.options.apiKey}`;
+    } else if (this.jwtToken) {
       headers["Authorization"] = `Bearer ${this.jwtToken}`;
     }
 
@@ -281,6 +288,20 @@ export class CloudTurnDetector implements TurnDetectorProvider {
       });
 
       clearTimeout(timeoutId);
+
+      // Handle 402 Quota Exceeded
+      if (response.status === 402) {
+        const data = await response.json();
+        if (this.config.debug) {
+          console.log("[CloudTurnDetector] Quota exceeded, using fallback");
+        }
+        // Notify via callback
+        if (this.options.onQuotaExceeded && data.upgradeUrl) {
+          this.options.onQuotaExceeded(data.upgradeUrl);
+        }
+        // Fall back to heuristic
+        return this.useFallback(context, "quota_exceeded");
+      }
 
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
