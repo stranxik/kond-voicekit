@@ -38,10 +38,10 @@ export interface UseTurnDetectorOptions extends TurnDetectorConfig {
   type?: TurnDetectorType;
   /** Enable turn detector (default: true) */
   enabled?: boolean;
-  /** Cloud API URL (for cloud provider) */
-  cloudApiUrl?: string;
-  /** Custom auth token provider for cloud provider */
-  getAuthToken?: () => Promise<string>;
+  /** VoiceKit API key for cloud provider */
+  apiKey?: string;
+  /** Callback when quota exceeded */
+  onQuotaExceeded?: (upgradeUrl: string) => void;
 }
 
 export interface UseTurnDetectorReturn {
@@ -72,8 +72,24 @@ async function createDetector(
   type: TurnDetectorType,
   config: UseTurnDetectorOptions
 ): Promise<{ provider: TurnDetectorProvider; activeType: TurnDetectorType }> {
+  // Cloud detector options (cloud only via KOND)
+  const cloudOptions = {
+    ...config,
+    apiKey: config.apiKey || "",
+    onQuotaExceeded: config.onQuotaExceeded,
+  };
+
   // Handle auto-selection
   if (type === "auto") {
+    // Auto: use cloud if apiKey available, otherwise try ONNX, fallback to heuristic
+    if (config.apiKey) {
+      console.log("[useTurnDetector] API key provided -> Cloud");
+      return {
+        provider: createCloudTurnDetector(cloudOptions),
+        activeType: "cloud",
+      };
+    }
+
     try {
       const capable = await isDeviceCapableForLocalML();
       if (capable) {
@@ -82,27 +98,18 @@ async function createDetector(
           provider: createOnnxTurnDetector(config),
           activeType: "onnx",
         };
-      } else {
-        console.log("[useTurnDetector] Device not capable -> Cloud");
-        return {
-          provider: createCloudTurnDetector({
-            ...config,
-            apiUrl: config.cloudApiUrl,
-            getAuthToken: config.getAuthToken,
-          }),
-          activeType: "cloud",
-        };
       }
     } catch (error) {
       console.warn(
         "[useTurnDetector] Auto-select failed, using heuristic:",
         error
       );
-      return {
-        provider: createHeuristicTurnDetector(config),
-        activeType: "heuristic",
-      };
     }
+
+    return {
+      provider: createHeuristicTurnDetector(config),
+      activeType: "heuristic",
+    };
   }
 
   // Explicit type selection
@@ -114,11 +121,7 @@ async function createDetector(
       };
     case "cloud":
       return {
-        provider: createCloudTurnDetector({
-          ...config,
-          apiUrl: config.cloudApiUrl,
-          getAuthToken: config.getAuthToken,
-        }),
+        provider: createCloudTurnDetector(cloudOptions),
         activeType: "cloud",
       };
     case "heuristic":
@@ -176,8 +179,8 @@ export function useTurnDetector(
       type,
       "enabled:",
       enabled,
-      "cloudApiUrl:",
-      config.cloudApiUrl
+      "hasApiKey:",
+      !!config.apiKey
     );
 
     if (!enabled) {

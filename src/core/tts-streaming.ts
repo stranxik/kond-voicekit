@@ -237,6 +237,7 @@ async function waitForPlaybackComplete(): Promise<void> {
  * Plays audio chunks as they arrive - no buffering delay
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
+ * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
  */
 export async function speakTextStreaming(
   text: string,
@@ -244,7 +245,8 @@ export async function speakTextStreaming(
   onStart?: () => void,
   onEnd?: () => void,
   onError?: (error: Error) => void,
-  ttsModel?: TtsModel
+  ttsModel?: TtsModel,
+  voice?: string
 ): Promise<void> {
   // Reset state
   stopStreamingTTS();
@@ -258,7 +260,7 @@ export async function speakTextStreaming(
     const response = await fetch(config.ttsStreamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, locale, ttsModel }),
+      body: JSON.stringify({ text, locale, ttsModel, voice }),
     });
 
     if (!response.ok) {
@@ -321,9 +323,10 @@ export function speakTextStreamingWithCallback(
   locale: Locale = "fr",
   onEnd: () => void,
   onError?: (error: Error) => void,
-  ttsModel?: TtsModel
+  ttsModel?: TtsModel,
+  voice?: string
 ): void {
-  speakTextStreaming(text, locale, undefined, onEnd, onError, ttsModel).catch((err) => {
+  speakTextStreaming(text, locale, undefined, onEnd, onError, ttsModel, voice).catch((err) => {
     onError?.(err instanceof Error ? err : new Error("Streaming TTS failed"));
   });
 }
@@ -341,11 +344,13 @@ export function speakTextStreamingWithCallback(
  * 2. When current ends: playPreloadedAudio(next, onEnd, onError)
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
+ * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
  */
 export async function prefetchAudio(
   text: string,
   locale: Locale = "fr",
-  ttsModel?: TtsModel
+  ttsModel?: TtsModel,
+  voice?: string
 ): Promise<PreloadedAudio> {
   const abortController = new AbortController();
   const preloaded: PreloadedAudio = {
@@ -359,7 +364,7 @@ export async function prefetchAudio(
     const response = await fetch(config.ttsStreamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, locale, ttsModel }),
+      body: JSON.stringify({ text, locale, ttsModel, voice }),
       signal: abortController.signal,
     });
 

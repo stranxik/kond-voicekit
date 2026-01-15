@@ -11,15 +11,9 @@ export { isBackchannel, isLikelyIncomplete, isSemanticComplete, hasTerminalPunct
 export { OnnxTurnDetector, createOnnxTurnDetector } from "./onnx";
 export type { OnnxTurnDetectorOptions } from "./onnx";
 
-// Cloud (remote ML API)
-export {
-  CloudTurnDetector,
-  createCloudTurnDetector,
-  createCloudTurnDetectorWithAuth,
-  configureCloudTurnDetector,
-  getCloudTurnDetectorConfig,
-} from "./cloud";
-export type { CloudTurnDetectorOptions, CloudTurnDetectorConfig } from "./cloud";
+// Cloud (remote ML API via KOND)
+export { CloudTurnDetector, createCloudTurnDetector } from "./cloud";
+export type { CloudTurnDetectorOptions } from "./cloud";
 
 // Mock (testing)
 export { MockTurnDetector, createMockTurnDetector } from "./mock";

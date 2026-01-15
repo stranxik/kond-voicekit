@@ -38,14 +38,12 @@ import type { VADProvider } from "./ports/vad";
 import type { TurnDetectorProvider } from "./ports/turn-detector";
 
 // Adapters
-import { configureDeepgram, createDeepgramAdapter, createDeepgramAdapterWithAuth } from "./adapters/stt";
-import { configureFetchTTS } from "./adapters/tts";
+import { createDeepgramAdapter } from "./adapters/stt";
 import { createSileroVAD } from "./adapters/vad";
 import {
   createHeuristicTurnDetector,
   createCloudTurnDetector,
   createOnnxTurnDetector,
-  configureCloudTurnDetector,
 } from "./adapters/turn-detector";
 
 // Core
@@ -91,34 +89,6 @@ export class VoiceKit {
       debug: config.debug ?? DEFAULT_CONFIG.debug,
     };
     this.locale = this.config.locale || "fr";
-
-    // Configure adapters with endpoints if provided
-    this.configureEndpoints();
-  }
-
-  /**
-   * Configure adapter URLs from config
-   */
-  private configureEndpoints(): void {
-    const { endpoints, getAuthToken } = this.config;
-
-    if (endpoints?.sttWebSocket) {
-      configureDeepgram({ wsUrl: endpoints.sttWebSocket });
-    }
-
-    if (endpoints?.ttsStream) {
-      configureTTSStreaming({ ttsStreamUrl: endpoints.ttsStream });
-      configureFetchTTS({ ttsStreamUrl: endpoints.ttsStream });
-    }
-
-    if (endpoints?.turnDetector) {
-      configureCloudTurnDetector({ apiUrl: endpoints.turnDetector });
-    }
-
-    if (endpoints?.voiceToken) {
-      configureDeepgram({ tokenUrl: endpoints.voiceToken });
-      configureCloudTurnDetector({ tokenUrl: endpoints.voiceToken });
-    }
   }
 
   /**
@@ -139,12 +109,11 @@ export class VoiceKit {
         },
       });
 
-      // Initialize STT adapter
-      if (this.config.getAuthToken) {
-        this.stt = createDeepgramAdapterWithAuth(this.config.getAuthToken);
-      } else {
-        this.stt = createDeepgramAdapter();
-      }
+      // Initialize STT adapter (cloud only via KOND)
+      this.stt = createDeepgramAdapter({
+        apiKey: this.config.apiKey,
+        baseUrl: this.config.baseUrl,
+      });
 
       // Initialize VAD adapter
       this.vad = createSileroVAD({
@@ -160,8 +129,10 @@ export class VoiceKit {
       await this.turnDetector.init();
 
       // Initialize Turn Manager with required callbacks
+      // Note: Turn manager only supports fr/en for semantic patterns.
+      // "multi" mode uses "fr" patterns by default.
       this.turnManager = createTurnManager({
-        locale: this.locale,
+        locale: this.locale === "multi" ? "fr" : this.locale,
         debug: this.config.debug,
         turnDetector: this.turnDetector ?? undefined,
         onTurnComplete: (transcript, confidence) => {
@@ -198,11 +169,10 @@ export class VoiceKit {
       detectBackchannels: this.config.turnDetection?.detectBackchannels ?? true,
     };
 
-    // Cloud detector options (apiKey takes precedence over getAuthToken)
+    // Cloud detector options (cloud only via KOND)
     const cloudOptions = {
       ...baseConfig,
       apiKey: this.config.apiKey,
-      getAuthToken: this.config.getAuthToken,
       onQuotaExceeded: this.config.onQuotaExceeded,
     };
 
@@ -210,13 +180,14 @@ export class VoiceKit {
       case "cloud":
         return createCloudTurnDetector(cloudOptions);
       case "onnx":
+        // ONNX stub kept for future v2, but not recommended
         return createOnnxTurnDetector(baseConfig);
       case "heuristic":
         return createHeuristicTurnDetector(baseConfig);
       case "auto":
       default:
-        // Auto: try cloud if apiKey or auth available, otherwise heuristic
-        if (this.config.apiKey || this.config.getAuthToken || this.config.endpoints?.turnDetector) {
+        // Auto: use cloud if apiKey available, otherwise heuristic fallback
+        if (this.config.apiKey) {
           return createCloudTurnDetector(cloudOptions);
         }
         return createHeuristicTurnDetector(baseConfig);

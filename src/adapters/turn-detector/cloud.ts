@@ -16,7 +16,7 @@ import type {
 } from "../../ports/turn-detector";
 import { DEFAULT_TURN_DETECTOR_CONFIG } from "../../ports/turn-detector";
 import { createHeuristicTurnDetector } from "./heuristic";
-import { KOND_ENDPOINTS } from "../../types/config";
+import { getEndpointUrl, ENDPOINT_PATHS, DEFAULT_BASE_URL } from "../../types/config";
 
 // =============================================================================
 // Adapter Implementation
@@ -25,6 +25,8 @@ import { KOND_ENDPOINTS } from "../../types/config";
 export interface CloudTurnDetectorOptions extends TurnDetectorConfig {
   /** VoiceKit API key (vk_xxx) - required */
   apiKey: string;
+  /** API base URL @default "https://kond.studio/api/voice/v1" */
+  baseUrl?: string;
   /** Callback when quota exceeded (402 response) */
   onQuotaExceeded?: (upgradeUrl: string) => void;
   /** Request timeout (ms) @default 2000 */
@@ -46,6 +48,7 @@ export class CloudTurnDetector implements TurnDetectorProvider {
   private options: CloudTurnDetectorOptions;
   private history: ConversationTurn[] = [];
   private fallbackDetector: TurnDetectorProvider | null = null;
+  private baseUrl: string;
 
   constructor(options: CloudTurnDetectorOptions) {
     this.options = {
@@ -57,6 +60,7 @@ export class CloudTurnDetector implements TurnDetectorProvider {
       ...DEFAULT_TURN_DETECTOR_CONFIG,
       ...options,
     };
+    this.baseUrl = options.baseUrl || DEFAULT_BASE_URL;
   }
 
   async init(): Promise<void> {
@@ -104,7 +108,8 @@ export class CloudTurnDetector implements TurnDetectorProvider {
     );
 
     try {
-      const response = await fetch(`${KOND_ENDPOINTS.turnDetector}`, {
+      const url = getEndpointUrl(this.baseUrl, ENDPOINT_PATHS.turnDetect);
+      const response = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

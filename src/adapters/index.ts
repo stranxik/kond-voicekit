@@ -56,15 +56,9 @@ export type { HeuristicTurnDetectorOptions } from "./turn-detector";
 export { OnnxTurnDetector, createOnnxTurnDetector } from "./turn-detector";
 export type { OnnxTurnDetectorOptions } from "./turn-detector";
 
-// Cloud (remote ML API)
-export {
-  CloudTurnDetector,
-  createCloudTurnDetector,
-  createCloudTurnDetectorWithAuth,
-  configureCloudTurnDetector,
-  getCloudTurnDetectorConfig,
-} from "./turn-detector";
-export type { CloudTurnDetectorOptions, CloudTurnDetectorConfig } from "./turn-detector";
+// Cloud (remote ML API via KOND)
+export { CloudTurnDetector, createCloudTurnDetector } from "./turn-detector";
+export type { CloudTurnDetectorOptions } from "./turn-detector";
 
 // Mock (testing)
 export { MockTurnDetector, createMockTurnDetector } from "./turn-detector";

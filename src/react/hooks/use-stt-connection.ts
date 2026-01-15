@@ -34,7 +34,11 @@ export interface STTCallbacks {
 interface UseSTTConnectionOptions {
   /** User ID for session tracking */
   userId?: string;
-  /** Auth token provider for self-hosted setups */
+  /** VoiceKit API key (vk_xxx) - required if not using getAuthToken */
+  apiKey?: string;
+  /** API base URL override */
+  baseUrl?: string;
+  /** Auth token provider for self-hosted setups (alternative to apiKey) */
   getAuthToken?: () => Promise<string>;
   debug?: boolean;
 }
@@ -69,7 +73,7 @@ export interface UseSTTConnectionReturn {
 export function useSTTConnection(
   options: UseSTTConnectionOptions = {}
 ): UseSTTConnectionReturn {
-  const { userId = "anonymous", getAuthToken, debug = false } = options;
+  const { userId = "anonymous", apiKey, baseUrl, getAuthToken, debug = false } = options;
 
   const sttRef = useRef<DeepgramStreamingAdapter | null>(null);
 
@@ -105,9 +109,16 @@ export function useSTTConnection(
       log("Connecting to STT...");
 
       // Create adapter based on auth method
-      const adapter = getAuthToken
-        ? createDeepgramAdapterWithAuth(getAuthToken, undefined, userId)
-        : createDeepgramAdapter(undefined, userId);
+      let adapter: DeepgramStreamingAdapter;
+      if (getAuthToken) {
+        // Custom auth token provider (for KOND app with Stack Auth)
+        adapter = createDeepgramAdapterWithAuth(getAuthToken, { baseUrl }, userId);
+      } else if (apiKey) {
+        // VoiceKit API key (for SDK users)
+        adapter = createDeepgramAdapter({ apiKey, baseUrl }, userId);
+      } else {
+        throw new Error("Either apiKey or getAuthToken is required");
+      }
 
       sttRef.current = adapter;
 

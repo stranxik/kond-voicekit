@@ -1,10 +1,15 @@
 /**
  * VoiceKit Configuration Types
+ *
+ * Simplified cloud-only configuration.
+ * All STT/TTS goes through KOND - you just provide your API key.
  */
 /**
  * Supported locales
+ * - "fr" / "en": Single language mode (STT + TTS)
+ * - "multi": Multilingual mode - Deepgram Nova-3 codeswitching (auto-detects 10 languages)
  */
-type Locale = "fr" | "en";
+type Locale = "fr" | "en" | "multi";
 /**
  * Conversation state machine states
  */
@@ -36,32 +41,45 @@ interface VoiceKitError {
 }
 /**
  * Main VoiceKit configuration
+ *
+ * Simple setup - just provide your API key and transcript handler:
+ *
+ * ```typescript
+ * const voice = new VoiceKit({
+ *   apiKey: "vk_live_xxx",
+ *   onTranscript: async (text) => {
+ *     const reply = await myLLM(text);
+ *     voice.speak(reply);
+ *   }
+ * });
+ * ```
  */
 interface VoiceKitConfig {
     /**
-     * KOND API key for managed SDK (vk_live_... or vk_test_...)
-     * Use this for the simplest setup with KOND platform
+     * VoiceKit API key (vk_xxx)
+     * Get your key at: https://kond.studio/developers/voicekit/keys
+     * Free tier: 100 min/month
      */
-    apiKey?: string;
-    /**
-     * Custom auth token provider for self-hosted setups
-     * Return a JWT or API key for authenticating with your services
-     */
-    getAuthToken?: () => Promise<string>;
-    /**
-     * Voice ID from the catalog (e.g., 'marie-fr', 'thomas-fr', 'emma-en')
-     */
-    voice?: string;
-    /**
-     * Default locale for STT and TTS
-     * @default "fr"
-     */
-    locale?: Locale;
+    apiKey: string;
     /**
      * Called when user finishes speaking with the final transcript
      * This is where you integrate your LLM
      */
     onTranscript: (transcript: string) => void | Promise<void>;
+    /**
+     * ElevenLabs voice ID
+     * Can be a KOND preset (marie-fr, thomas-fr, emma-en, james-en)
+     * or any custom ElevenLabs voice ID from your account
+     * @default "marie-fr"
+     */
+    voice?: string;
+    /**
+     * Locale for STT and TTS
+     * - "fr" / "en": Single language mode
+     * - "multi": Multilingual - Deepgram auto-detects FR/EN/ES/DE/IT/PT/JA/NL/RU/HI
+     * @default "fr"
+     */
+    locale?: Locale;
     /**
      * Called when conversation state changes
      */
@@ -79,67 +97,63 @@ interface VoiceKitConfig {
      */
     onSpeechActivity?: (speaking: boolean) => void;
     /**
+     * Callback when free quota is exceeded (402 response)
+     * Use this to show an upgrade prompt to users
+     */
+    onQuotaExceeded?: (upgradeUrl: string) => void;
+    /**
      * Observability callback for tracing (opt-in)
      * Use this to integrate with your observability stack (Axiom, Datadog, etc.)
      */
     onTrace?: (event: TraceEvent) => void;
     /**
-     * Custom endpoint URLs for self-hosted deployments
-     */
-    endpoints?: {
-        /** WebSocket URL for STT streaming */
-        sttWebSocket?: string;
-        /** HTTP URL for TTS streaming */
-        ttsStream?: string;
-        /** HTTP URL for turn detector API */
-        turnDetector?: string;
-        /** HTTP URL for voice token endpoint */
-        voiceToken?: string;
-    };
-    /**
-     * Turn detection configuration
+     * Turn detection tuning
      */
     turnDetection?: {
-        /** Detector type: 'auto' | 'onnx' | 'cloud' | 'heuristic' */
-        type?: "auto" | "onnx" | "cloud" | "heuristic";
-        /** Minimum confidence to commit turn (0-1) */
+        /** Force specific turn detector type @default "auto" */
+        type?: "auto" | "cloud" | "onnx" | "heuristic";
+        /** Minimum confidence to commit turn (0-1) @default 0.7 */
         confidenceThreshold?: number;
-        /** Silence timeout before committing (ms) */
+        /** Silence timeout before committing (ms) @default 1200 */
         silenceTimeoutMs?: number;
-        /** Detect backchannel responses like "mh", "ok" */
+        /** Detect backchannel responses like "mh", "ok" @default true */
         detectBackchannels?: boolean;
     };
     /**
-     * TTS configuration
+     * TTS tuning
      */
     tts?: {
-        /** Speech speed (0.5-1.5) */
+        /** Speech speed (0.5-1.5) @default 1.0 */
         speed?: number;
-        /** ElevenLabs stability (0-1) */
-        stability?: number;
-        /** ElevenLabs similarity boost (0-1) */
-        similarityBoost?: number;
     };
     /**
-     * Timing configuration
+     * Internal timing config (for advanced use)
+     * @internal
      */
     timing?: {
-        /** Cooldown after TTS before resuming (ms) */
+        /** Cooldown after TTS (ms) @default 150 */
         cooldownMs?: number;
-        /** Grace period for transcript stabilization (ms) */
+        /** Grace period (ms) @default 2000 */
         gracePeriodMs?: number;
-        /** Max silence before committing (ms) */
+        /** Max silence (ms) @default 2500 */
         maxSilenceMs?: number;
     };
     /**
      * Enable debug logging
      */
     debug?: boolean;
+    /**
+     * API base URL override
+     * Only needed for staging/development environments
+     * @default "https://kond.studio/api/voice/v1"
+     * @internal
+     */
+    baseUrl?: string;
 }
 declare const DEFAULT_CONFIG: {
+    voice: string;
     locale: Locale;
     turnDetection: {
-        type: "auto";
         confidenceThreshold: number;
         silenceTimeoutMs: number;
         detectBackchannels: boolean;
@@ -201,10 +215,6 @@ declare class VoiceKit {
     private currentTranscript;
     private isProcessing;
     constructor(config: VoiceKitConfig);
-    /**
-     * Configure adapter URLs from config
-     */
-    private configureEndpoints;
     /**
      * Initialize adapters and request microphone permission
      */
@@ -825,12 +835,13 @@ declare function isStreamingTTSPlaying(): boolean;
  * Plays audio chunks as they arrive - no buffering delay
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
+ * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
  */
-declare function speakTextStreaming(text: string, locale?: Locale, onStart?: () => void, onEnd?: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel): Promise<void>;
+declare function speakTextStreaming(text: string, locale?: Locale, onStart?: () => void, onEnd?: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel, voice?: string): Promise<void>;
 /**
  * Speak text with callback (wrapper for voice conversation)
  */
-declare function speakTextStreamingWithCallback(text: string, locale: Locale | undefined, onEnd: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel): void;
+declare function speakTextStreamingWithCallback(text: string, locale: Locale | undefined, onEnd: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel, voice?: string): void;
 /**
  * Pre-fetch audio without playing
  * Returns a PreloadedAudio object that can be played later with playPreloadedAudio()
@@ -840,8 +851,9 @@ declare function speakTextStreamingWithCallback(text: string, locale: Locale | u
  * 2. When current ends: playPreloadedAudio(next, onEnd, onError)
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
+ * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
  */
-declare function prefetchAudio(text: string, locale?: Locale, ttsModel?: TtsModel): Promise<PreloadedAudio>;
+declare function prefetchAudio(text: string, locale?: Locale, ttsModel?: TtsModel, voice?: string): Promise<PreloadedAudio>;
 /**
  * Cancel a pre-fetch in progress
  */
@@ -914,6 +926,8 @@ declare function createSentenceAccumulator(onSentence: (sentence: string) => voi
 
 interface TTSQueueOptions {
     locale: Locale;
+    /** ElevenLabs voice ID (optional, defaults to locale-based selection) */
+    voice?: string;
     onStart?: () => void;
     onEnd?: () => void;
     onError?: (error: Error) => void;
@@ -1032,22 +1046,33 @@ declare function sleep(ms: number): Promise<void>;
  * Deepgram adapter configuration
  */
 interface DeepgramConfig {
-    /** WebSocket URL for STT streaming (e.g., wss://voice-ws.example.com) */
-    wsUrl: string;
-    /** Token endpoint URL (default: /api/voice/token) */
-    tokenUrl?: string;
+    /** API base URL @default "https://kond.studio/api/voice/v1" */
+    baseUrl?: string;
+    /** VoiceKit API key (vk_xxx) - required for token fetch */
+    apiKey?: string;
+    /** WebSocket URL override (normally returned by token endpoint) */
+    wsUrl?: string;
     /** Optional trace callback for observability */
     onTrace?: (event: TraceEvent) => void;
 }
 /**
  * Configure Deepgram adapter globally
- * Call this before creating adapters to set your backend URLs
+ * @internal Usually not needed - SDK handles this automatically
  */
 declare function configureDeepgram(config: Partial<DeepgramConfig>): void;
 /**
  * Get current Deepgram config
+ * @internal
  */
 declare function getDeepgramConfig(): DeepgramConfig;
+/**
+ * Auth token response from gateway
+ */
+interface TokenResponse {
+    token: string;
+    wsUrl: string;
+    expiresIn?: number;
+}
 declare class DeepgramStreamingAdapter implements StreamingSTTPort {
     private getAuthToken;
     private ws;
@@ -1062,7 +1087,7 @@ declare class DeepgramStreamingAdapter implements StreamingSTTPort {
     private audioBuffer;
     private isReconnecting;
     private static readonly MAX_BUFFER_SIZE;
-    constructor(getAuthToken: () => Promise<string>, config?: Partial<DeepgramConfig>, userId?: string);
+    constructor(getAuthToken: () => Promise<string | TokenResponse>, config?: Partial<DeepgramConfig>, userId?: string);
     startStreaming(callbacks: StreamingCallbacks, language?: string): Promise<void>;
     /**
      * Handle incoming Deepgram message
@@ -1085,16 +1110,19 @@ declare class DeepgramStreamingAdapter implements StreamingSTTPort {
 }
 /**
  * Create a Deepgram streaming adapter
- * @param config Optional config override
+ * Uses VoiceKit gateway for authentication
+ *
+ * @param config Config with apiKey (required) and optional baseUrl
  * @param userId User ID for observability
  */
-declare function createDeepgramAdapter(config?: Partial<DeepgramConfig> & {
-    tokenUrl?: string;
+declare function createDeepgramAdapter(config: Partial<DeepgramConfig> & {
+    apiKey: string;
 }, userId?: string): DeepgramStreamingAdapter;
 /**
  * Create a Deepgram adapter with custom auth token provider
+ * For advanced use cases where you handle token fetching yourself
  */
-declare function createDeepgramAdapterWithAuth(getAuthToken: () => Promise<string>, config?: Partial<DeepgramConfig>, userId?: string): DeepgramStreamingAdapter;
+declare function createDeepgramAdapterWithAuth(getAuthToken: () => Promise<string | TokenResponse>, config?: Partial<DeepgramConfig>, userId?: string): DeepgramStreamingAdapter;
 
 /**
  * Fetch-based TTS Adapter
@@ -1287,43 +1315,29 @@ declare function createOnnxTurnDetector(options?: OnnxTurnDetectorOptions): Turn
 
 /**
  * Cloud Turn Detector
- * Remote ML model via API for weaker devices or when local ONNX is unavailable.
  *
- * Calls a turn-detector API service with JWT authentication.
+ * Remote ML model via KOND API for turn prediction.
  * Falls back to heuristic detection if API call fails.
+ *
+ * All authentication goes through VoiceKit API key (vk_xxx).
  */
 
-interface CloudTurnDetectorConfig {
-    /** API URL for turn detector service */
-    apiUrl: string;
-    /** Token endpoint URL (default: /api/voice/token) */
-    tokenUrl?: string;
-}
-/**
- * Configure Cloud Turn Detector globally
- * Call this before creating adapters to set your backend URLs
- */
-declare function configureCloudTurnDetector(config: Partial<CloudTurnDetectorConfig>): void;
-/**
- * Get current Cloud Turn Detector config
- */
-declare function getCloudTurnDetectorConfig(): CloudTurnDetectorConfig;
 interface CloudTurnDetectorOptions extends TurnDetectorConfig {
-    /** API URL for turn detector service (optional override) */
-    apiUrl?: string;
-    /** Token endpoint URL (optional override) */
-    tokenUrl?: string;
-    /** Custom auth token provider (alternative to tokenUrl) */
-    getAuthToken?: () => Promise<string>;
-    /** Request timeout (ms) */
+    /** VoiceKit API key (vk_xxx) - required */
+    apiKey: string;
+    /** API base URL @default "https://kond.studio/api/voice/v1" */
+    baseUrl?: string;
+    /** Callback when quota exceeded (402 response) */
+    onQuotaExceeded?: (upgradeUrl: string) => void;
+    /** Request timeout (ms) @default 2000 */
     timeoutMs?: number;
-    /** Max retries on failure */
+    /** Max retries on failure @default 1 */
     maxRetries?: number;
 }
 /**
  * Cloud Turn Detector
  *
- * Calls remote API for turn prediction with JWT authentication.
+ * Calls KOND turn detector API for ML-powered turn prediction.
  * Falls back to heuristic if API unavailable.
  */
 declare class CloudTurnDetector implements TurnDetectorProvider {
@@ -1331,37 +1345,16 @@ declare class CloudTurnDetector implements TurnDetectorProvider {
     private config;
     private options;
     private history;
-    private apiUrl;
-    private tokenUrl;
-    private jwtToken;
-    private tokenExpiresAt;
-    private isRefreshing;
     private fallbackDetector;
-    private static readonly TOKEN_REFRESH_MARGIN_MS;
-    constructor(options?: CloudTurnDetectorOptions);
+    private baseUrl;
+    constructor(options: CloudTurnDetectorOptions);
     init(): Promise<void>;
     /**
-     * Check if token needs refresh (expired or expiring soon)
-     */
-    private needsTokenRefresh;
-    /**
-     * Parse JWT to extract expiration time
-     */
-    private parseTokenExpiry;
-    /**
-     * Refresh JWT token from the app's auth endpoint
-     */
-    private refreshToken;
-    /**
-     * Ensure we have a valid token, refreshing if needed
-     */
-    private ensureValidToken;
-    /**
-     * Predict turn state by calling remote API
+     * Predict turn state by calling KOND API
      */
     predict(context: TurnContext): Promise<TurnPrediction>;
     /**
-     * Call the turn detector API
+     * Call the KOND turn detector API
      */
     private callApi;
     /**
@@ -1375,11 +1368,7 @@ declare class CloudTurnDetector implements TurnDetectorProvider {
 /**
  * Factory function
  */
-declare function createCloudTurnDetector(options?: CloudTurnDetectorOptions): TurnDetectorProvider;
-/**
- * Factory function with custom auth token provider
- */
-declare function createCloudTurnDetectorWithAuth(getAuthToken: () => Promise<string>, options?: Omit<CloudTurnDetectorOptions, "getAuthToken">): TurnDetectorProvider;
+declare function createCloudTurnDetector(options: CloudTurnDetectorOptions): TurnDetectorProvider;
 
 /**
  * Mock Turn Detector
@@ -1417,4 +1406,4 @@ declare class MockTurnDetector implements TurnDetectorProvider {
  */
 declare function createMockTurnDetector(options?: MockTurnDetectorOptions): TurnDetectorProvider;
 
-export { CloudTurnDetector, type CloudTurnDetectorConfig, type CloudTurnDetectorOptions, type ConversationState, type ConversationTurn, DEFAULT_CONFIG, DEFAULT_TURN_DETECTOR_CONFIG, DEFAULT_VAD_CONFIG, type DeepgramConfig, DeepgramStreamingAdapter, type EOUContext, type EOUReason, type EOUResult, FetchTTSAdapter, type FetchTTSAdapterOptions, type FetchTTSConfig, HeuristicTurnDetector, type HeuristicTurnDetectorOptions, type LinguisticSignals, type Locale, MockTurnDetector, type MockTurnDetectorOptions, OnnxTurnDetector, type OnnxTurnDetectorOptions, type PreloadedAudio, SileroVADAdapter, type SileroVADConfig, type StreamingCallbacks, type StreamingSTTPort, type TTSProvider, type TTSStreamingConfig, type TraceEvent, type TranscriptionResult, type TriggerState, type TtsContext, type TtsModel, type TtsModelSelection, type TurnContext, type TurnDetectorConfig, type TurnDetectorProvider, type TurnManager, type TurnManagerConfig, type TurnPrediction, type VADCallbacks, type VADConfig, type VADProvider, VoiceKit, type VoiceKitConfig, type VoiceKitError, analyzeLinguisticSignals, analyzeTrigger, cancelPrefetch, extractSentences as chunkSentences, configureCloudTurnDetector, configureDeepgram, configureFetchTTS, configureTTSStreaming, createCloudTurnDetector, createCloudTurnDetectorWithAuth, createDeepgramAdapter, createDeepgramAdapterWithAuth, createFetchTTSAdapter, createHeuristicTurnDetector, createMockTurnDetector, createOnnxTurnDetector, createSentenceAccumulator, createSileroVAD, createTTSQueue, createTurnManager, createVoiceKit, detectEndOfUtterance, ensureAudioContextResumed, explainEOUResult, extractSentences, getCloudTurnDetectorConfig, getDeepgramConfig, getDeviceCapabilitySummary, getFetchTTSConfig, getIOSVersion, getTTSStreamingConfig, hasTerminalPunctuation, hasVisualBlocks, isBackchannel, isDeviceCapableForLocalML, isIOS, isLikelyComplete, isLikelyIncomplete, isPreloadedReady, isSafari, isSemanticComplete, isShortAcknowledgment, isStreamingTTSPlaying, isBackchannel$1 as isTriggerBackchannel, isLikelyIncomplete$1 as isTriggerIncomplete, isUtteranceComplete, isVADSupported, isVoiceConversationSupported, playPreloadedAudio, prefetchAudio, sanitizeForTTS, selectTtsModel, selectTtsModelWithReason, shouldTriggerEarly, sleep, speakTextStreaming, speakTextStreamingWithCallback, stopStreamingTTS, testAudioContextBeep };
+export { CloudTurnDetector, type CloudTurnDetectorOptions, type ConversationState, type ConversationTurn, DEFAULT_CONFIG, DEFAULT_TURN_DETECTOR_CONFIG, DEFAULT_VAD_CONFIG, type DeepgramConfig, DeepgramStreamingAdapter, type EOUContext, type EOUReason, type EOUResult, FetchTTSAdapter, type FetchTTSAdapterOptions, type FetchTTSConfig, HeuristicTurnDetector, type HeuristicTurnDetectorOptions, type LinguisticSignals, type Locale, MockTurnDetector, type MockTurnDetectorOptions, OnnxTurnDetector, type OnnxTurnDetectorOptions, type PreloadedAudio, SileroVADAdapter, type SileroVADConfig, type StreamingCallbacks, type StreamingSTTPort, type TTSProvider, type TTSStreamingConfig, type TraceEvent, type TranscriptionResult, type TriggerState, type TtsContext, type TtsModel, type TtsModelSelection, type TurnContext, type TurnDetectorConfig, type TurnDetectorProvider, type TurnManager, type TurnManagerConfig, type TurnPrediction, type VADCallbacks, type VADConfig, type VADProvider, VoiceKit, type VoiceKitConfig, type VoiceKitError, analyzeLinguisticSignals, analyzeTrigger, cancelPrefetch, extractSentences as chunkSentences, configureDeepgram, configureFetchTTS, configureTTSStreaming, createCloudTurnDetector, createDeepgramAdapter, createDeepgramAdapterWithAuth, createFetchTTSAdapter, createHeuristicTurnDetector, createMockTurnDetector, createOnnxTurnDetector, createSentenceAccumulator, createSileroVAD, createTTSQueue, createTurnManager, createVoiceKit, detectEndOfUtterance, ensureAudioContextResumed, explainEOUResult, extractSentences, getDeepgramConfig, getDeviceCapabilitySummary, getFetchTTSConfig, getIOSVersion, getTTSStreamingConfig, hasTerminalPunctuation, hasVisualBlocks, isBackchannel, isDeviceCapableForLocalML, isIOS, isLikelyComplete, isLikelyIncomplete, isPreloadedReady, isSafari, isSemanticComplete, isShortAcknowledgment, isStreamingTTSPlaying, isBackchannel$1 as isTriggerBackchannel, isLikelyIncomplete$1 as isTriggerIncomplete, isUtteranceComplete, isVADSupported, isVoiceConversationSupported, playPreloadedAudio, prefetchAudio, sanitizeForTTS, selectTtsModel, selectTtsModelWithReason, shouldTriggerEarly, sleep, speakTextStreaming, speakTextStreamingWithCallback, stopStreamingTTS, testAudioContextBeep };

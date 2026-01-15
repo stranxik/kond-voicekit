@@ -16,123 +16,164 @@
 
 # @kond/voicekit
 
-> **"Give your AI agent a voice"**
+> **Voice I/O for AI agents — You bring your own LLM**
 >
-> Voice SDK for AI agents — STT, TTS, Turn Detection ML
+> VoiceKit handles STT, TTS, and turn detection. Your AI handles intelligence.
 >
-> **Languages:** English, French
+> **Zero LLM lock-in. Zero markup on your AI calls.**
 
 ---
 
-## What is VoiceKit?
+## Why VoiceKit?
 
-VoiceKit is not just code. It's **orchestration**.
+Most voice AI platforms (Vapi, Retell, Hume) want to own your entire stack — including your LLM. They proxy your AI calls and charge markup on every token.
 
-Anyone can connect Deepgram + ElevenLabs. Nobody wants to spend months handling the edge cases: VAD cooldowns, barge-in detection, gapless audio queuing, backchannel filtering ("mh", "yeah"), turn-taking ML...
-
-**VoiceKit = months of R&D condensed into one import.**
+**VoiceKit is different:**
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  Developer wants voice for their AI agent                                │
-│                                                                          │
-│  WITHOUT VOICEKIT                    WITH VOICEKIT                       │
-│  ─────────────────                   ─────────────                       │
-│  ❌ Integrate Deepgram/Whisper       ✓ One import                        │
-│  ❌ WebSocket + audio buffers        ✓ Handled                           │
-│  ❌ End-of-turn detection            ✓ ML-based (39% better)             │
-│  ❌ False positives ("uh", "hmm")    ✓ Backchannel filtering             │
-│  ❌ ElevenLabs/OpenAI TTS            ✓ Abstracted                        │
-│  ❌ Gaps between sentences           ✓ Gapless queue + prefetch          │
-│  ❌ Barge-in support                 ✓ Native                            │
-│  ❌ Latency optimization             ✓ < 1.5s end-to-end                 │
-│  ─────────────────────────────────────────────────────────────────────── │
-│  = 2-3 months dev                    = 1 day integration                 │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+┌─────────────────────────────────────────────────────────────────┐
+│  OTHER PLATFORMS                                                 │
+│                                                                  │
+│  Your App ──► Platform ──► LLM (their proxy) ──► Platform ──► App│
+│                    └── 15-30% markup on tokens ──┘               │
+│                                                                  │
+│  Lock-in: Limited LLM choices, migration required to switch     │
+└─────────────────────────────────────────────────────────────────┘
 
----
-
-## Status
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  MODE            │ STATUS           │ DESCRIPTION                        │
-├──────────────────┼──────────────────┼────────────────────────────────────┤
-│  Self-hosted     │ ✓ Available      │ Bring your own endpoints           │
-│  Managed Service │ ○ Roadmap        │ One API key, everything included   │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-**Today:** Self-hosted mode. You provide your own STT/TTS endpoints (Deepgram, ElevenLabs, etc.).
-
-**Tomorrow:** Managed service with a single KOND API key — STT + TTS + ML included, zero config.
-
----
-
-## Features
-
-```
-WHAT'S INCLUDED
-───────────────
-├─ 9-state conversation FSM (complete with edge cases)
-├─ VAD cooldown (avoid false positives on short silences)
-├─ Barge-in (natural user interruption of AI)
-├─ Early trigger (respond before utterance complete)
-├─ Backchannels ("mh", "yeah", "ouais" → skip LLM, no response)
-├─ TTS queue with prefetch (audio without gaps between sentences)
-├─ ML Turn Detection (LiveKit ONNX model, runs client-side)
-├─ Sentence accumulator (streaming chunking for progressive TTS)
-├─ Framework-agnostic core (vanilla JS)
-└─ React bindings included (hooks + components)
+┌─────────────────────────────────────────────────────────────────┐
+│  VOICEKIT                                                        │
+│                                                                  │
+│  Your App ──► VoiceKit ──► Your App ──► YOUR LLM (direct)       │
+│                  │                           │                   │
+│               Voice I/O                   Your choice            │
+│          (STT, TTS, Turn)           (Claude/GPT/Gemini/...)     │
+│                                                                  │
+│  Freedom: Any LLM, switch anytime, pay your provider directly   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Installation
+## Early Access
 
-```bash
-npm install @kond/voicekit
-# or
-pnpm add @kond/voicekit
-```
+VoiceKit is currently in **early access**.
+
+Get your free API key at [kond.studio/developers/voicekit/keys](https://kond.studio/developers/voicekit/keys).
+
+Free tier includes **100 minutes/month**.
 
 ---
 
 ## Quick Start
 
-### React
-
-```tsx
-import { useVoiceKit } from '@kond/voicekit/react';
-
-function VoiceChat() {
-  const voice = useVoiceKit({
-    locale: 'fr',
-    onTranscript: async (text) => {
-      const reply = await myLLM.chat(text);
-      voice.speak(reply);
-    },
-  });
-
-  return (
-    <button onClick={voice.isListening ? voice.stop : voice.start}>
-      {voice.isListening ? '🎤 Listening...' : '🔇 Start'}
-    </button>
-  );
-}
-```
-
-### Vanilla JavaScript
+### With Claude (Anthropic)
 
 ```typescript
 import { VoiceKit } from '@kond/voicekit';
+import Anthropic from '@anthropic-ai/sdk';
+
+const anthropic = new Anthropic();
 
 const voice = new VoiceKit({
-  locale: 'fr',
+  apiKey: 'vk_xxxxxxxxxxxx',
+  locale: 'en',
   onTranscript: async (text) => {
-    const reply = await myLLM.chat(text);
-    voice.speak(reply);
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: text }],
+    });
+    voice.speak(response.content[0].text);
+  },
+});
+
+await voice.start();
+```
+
+### With GPT (OpenAI)
+
+```typescript
+import { VoiceKit } from '@kond/voicekit';
+import OpenAI from 'openai';
+
+const openai = new OpenAI();
+
+const voice = new VoiceKit({
+  apiKey: 'vk_xxxxxxxxxxxx',
+  locale: 'en',
+  onTranscript: async (text) => {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: text }],
+    });
+    voice.speak(response.choices[0].message.content);
+  },
+});
+
+await voice.start();
+```
+
+### With Gemini (Google)
+
+```typescript
+import { VoiceKit } from '@kond/voicekit';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+
+const voice = new VoiceKit({
+  apiKey: 'vk_xxxxxxxxxxxx',
+  locale: 'en',
+  onTranscript: async (text) => {
+    const result = await model.generateContent(text);
+    voice.speak(result.response.text());
+  },
+});
+
+await voice.start();
+```
+
+### With Mistral
+
+```typescript
+import { VoiceKit } from '@kond/voicekit';
+import { Mistral } from '@mistralai/mistralai';
+
+const mistral = new Mistral();
+
+const voice = new VoiceKit({
+  apiKey: 'vk_xxxxxxxxxxxx',
+  locale: 'en',
+  onTranscript: async (text) => {
+    const response = await mistral.chat.complete({
+      model: 'mistral-large-latest',
+      messages: [{ role: 'user', content: text }],
+    });
+    voice.speak(response.choices[0].message.content);
+  },
+});
+
+await voice.start();
+```
+
+### With Ollama (Local LLM)
+
+```typescript
+import { VoiceKit } from '@kond/voicekit';
+import { Ollama } from 'ollama';
+
+const ollama = new Ollama();
+
+const voice = new VoiceKit({
+  apiKey: 'vk_xxxxxxxxxxxx',
+  locale: 'en',
+  onTranscript: async (text) => {
+    const response = await ollama.chat({
+      model: 'llama3',
+      messages: [{ role: 'user', content: text }],
+    });
+    voice.speak(response.message.content);
   },
 });
 
@@ -141,186 +182,145 @@ await voice.start();
 
 ---
 
-## Self-Hosted Mode
+## Two API Keys
 
-You provide your own STT/TTS endpoints:
+VoiceKit uses a simple two-key model:
 
-```typescript
-const voice = new VoiceKit({
-  getAuthToken: () => fetchMyToken(),
-  endpoints: {
-    sttWebSocket: '/api/voice/stt',     // Your Deepgram proxy
-    ttsStream: '/api/voice/tts',         // Your ElevenLabs proxy
-    turnDetector: '/api/voice/turn',     // Turn detection API (optional)
-  },
-  locale: 'fr',
-  onTranscript: async (text) => {
-    const reply = await myLLM.chat(text);
-    voice.speak(reply);
-  },
-});
+| Key | Purpose | Who provides it |
+|-----|---------|-----------------|
+| `vk_xxx` | Voice I/O (STT, TTS, turn detection) | VoiceKit |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / etc. | Your LLM | You (direct from provider) |
+
+**VoiceKit never sees your LLM calls.** The `onTranscript` callback is invisible to me — I only handle voice.
+
+---
+
+## React
+
+```tsx
+import { useVoiceKit } from '@kond/voicekit/react';
+
+function VoiceChat() {
+  const voice = useVoiceKit({
+    apiKey: process.env.NEXT_PUBLIC_VOICEKIT_API_KEY,
+    locale: 'en',
+    onTranscript: async (text) => {
+      const reply = await myLLM.chat(text);  // Your LLM, your choice
+      voice.speak(reply);
+    },
+  });
+
+  return (
+    <button onClick={voice.isActive ? voice.stop : voice.start}>
+      {voice.isActive ? 'Listening...' : 'Start Voice'}
+    </button>
+  );
+}
 ```
 
-### Backend Requirements
+---
+
+## What's Included
+
+VoiceKit handles the hard parts of voice:
+
+| Feature | Description |
+|---------|-------------|
+| **Speech-to-Text** | Optimized STT with streaming transcription |
+| **Text-to-Speech** | Natural voices with gapless audio queue |
+| **Turn Detection** | ML-powered end-of-utterance detection |
+| **VAD** | Local voice activity detection |
+| **Barge-in** | Natural user interruption support |
+| **Backchannels** | Filters "mh", "yeah", "ok" (no LLM call) |
+| **9-state FSM** | Battle-tested conversation orchestration |
+
+---
+
+## Languages
+
+```
+SUPPORTED LOCALES
+─────────────────
+├─ "en"     English
+├─ "fr"     French
+└─ "multi"  Multilingual (auto-detects EN/FR/ES/DE/IT/PT/JA/NL/RU/HI)
+```
+
+---
+
+## Pricing
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│  ENDPOINT              │ TYPE          │ DESCRIPTION                     │
-├────────────────────────┼───────────────┼─────────────────────────────────┤
-│  /api/voice/stt        │ WebSocket     │ Proxy to Deepgram STT           │
-│  /api/voice/tts        │ HTTP Stream   │ Proxy to ElevenLabs TTS         │
-│  /api/voice/token      │ HTTP GET      │ Auth token (optional)           │
+│  PLAN              │ MINUTES/MONTH      │ PRICE        │ OVERAGE         │
+├────────────────────┼────────────────────┼──────────────┼─────────────────┤
+│  Free              │ 100                │ $0/mo        │ Blocked         │
+│  Starter           │ 500                │ $19/mo       │ $0.05/min       │
+│  Pro               │ 3000               │ $99/mo       │ $0.03/min       │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-VoiceKit is **backend-agnostic**. Works with Next.js, Hono, Express, Fastify, Cloudflare Workers, Deno, Bun...
-
----
-
-## Composable Hooks
-
-For custom orchestration, use granular hooks:
-
-```typescript
-import {
-  useAudioSetup,
-  useSTTConnection,
-  useTurnCoordination,
-  useLlmIntegration,
-  useSileroVAD,
-  useTurnDetector,
-} from '@kond/voicekit/react';
-
-// Build your own voice pipeline
-const audio = useAudioSetup({ debug: true });
-const stt = useSTTConnection({ userId: 'user-123', locale: 'fr' });
-const vad = useSileroVAD({ threshold: 0.5 });
-const turnDetector = useTurnDetector({ type: 'auto' });
-```
-
----
-
-## Architecture
-
-```
-@kond/voicekit/
-├─ core/                       # Framework-agnostic engine
-│   ├─ turn-manager.ts         # Signal fusion (VAD + transcript + ML)
-│   ├─ tts-queue.ts            # Sentence queue + prefetch
-│   ├─ tts-streaming.ts        # Web Audio playback
-│   ├─ eou-detector.ts         # End-of-utterance detection
-│   └─ sentence-chunker.ts     # Streaming text → sentences
-│
-├─ adapters/
-│   ├─ stt/deepgram.ts         # Deepgram STT adapter
-│   ├─ tts/fetch-tts.ts        # Generic fetch-based TTS
-│   ├─ vad/silero-vad.ts       # Silero WASM VAD
-│   └─ turn-detector/
-│       ├─ cloud.ts            # Remote ML API
-│       ├─ onnx.ts             # Local ONNX (LiveKit model)
-│       └─ heuristic.ts        # Rule-based fallback
-│
-├─ ports/                      # Interfaces (dependency inversion)
-│   ├─ stt.ts
-│   ├─ tts.ts
-│   ├─ vad.ts
-│   └─ turn-detector.ts
-│
-├─ react/                      # React bindings
-│   ├─ use-voice-kit.ts        # Main hook
-│   ├─ use-voice-conversation.ts
-│   ├─ hooks/                  # Granular hooks
-│   └─ VoiceButton.tsx         # Ready-to-use component
-│
-├─ voicekit.ts                 # VoiceKit class (vanilla JS)
-└─ index.ts                    # Exports
-```
-
----
-
-## LLM-Agnostic
-
-VoiceKit is **independent of your LLM**. You bring your own:
-
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  PROVIDED BY VOICEKIT          │  PROVIDED BY YOU                        │
-├────────────────────────────────┼─────────────────────────────────────────┤
-│  ✓ STT (Deepgram adapter)      │  ✓ Your LLM (Claude, GPT, Gemini...)   │
-│  ✓ TTS (ElevenLabs adapter)    │  ✓ Your LLM API key                    │
-│  ✓ Turn Detection ML           │  ✓ Your business logic                 │
-│  ✓ 9-state conversation FSM    │  ✓ Your backend endpoints              │
-│  ✓ Audio orchestration         │                                         │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-**VoiceKit doesn't know which LLM you use** — and that's intentional.
-The `onTranscript` callback is a black box for us.
+**Note:** This is just VoiceKit pricing. Your LLM costs are separate and go directly to your provider.
 
 ---
 
 ## vs Competition
 
 ```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  SOLUTION        │ TYPE       │ STRENGTH            │ WEAKNESS           │
-├──────────────────┼────────────┼─────────────────────┼────────────────────┤
-│  LiveKit Agents  │ SDK Python │ Turn detection ML   │ No JS, no TTS Q    │
-│  Vapi.ai         │ SaaS       │ Turnkey             │ Closed, expensive  │
-│  Retell.ai       │ SaaS       │ UX polish           │ Closed, LLM lock-in│
-│  OpenAI Realtime │ API        │ Low latency         │ GPT-4 only, $$$    │
-│  Hume.ai         │ SaaS       │ Emotion detection   │ Very expensive     │
-├──────────────────┴────────────┴─────────────────────┴────────────────────┤
-│                                                                          │
-│  @kond/voicekit                                                          │
-│  ───────────────                                                         │
-│  ✓ ML Turn Detection (LiveKit ONNX, client-side)                        │
-│  ✓ FR/EN backchannels ("mh", "ouais", "ok")                             │
-│  ✓ TTS Queue + Prefetching (gapless audio)                              │
-│  ✓ Native barge-in support                                               │
-│  ✓ 9-state FSM (battle-tested orchestration)                            │
-│  ✓ Framework-agnostic (React bindings included)                          │
-│  ✓ Open source (MIT license)                                             │
-│  ✓ LLM-agnostic (use any model)                                          │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           LLM COMPARISON                                 │
+├──────────────┬───────────────┬───────────────┬───────────────┬──────────┤
+│              │ VoiceKit      │ Vapi.ai       │ Retell.ai     │ Hume.ai  │
+├──────────────┼───────────────┼───────────────┼───────────────┼──────────┤
+│ LLM choice   │ ANY           │ Limited       │ Limited       │ EVI only │
+│              │               │ (their proxy) │ (their proxy) │          │
+├──────────────┼───────────────┼───────────────┼───────────────┼──────────┤
+│ LLM markup   │ 0%            │ ~15-30%       │ ~10-25%       │ Included │
+│              │ (pay direct)  │ on tokens     │ on tokens     │          │
+├──────────────┼───────────────┼───────────────┼───────────────┼──────────┤
+│ Local LLM    │ Yes           │ No            │ No            │ No       │
+│ (Ollama)     │               │               │               │          │
+├──────────────┼───────────────┼───────────────┼───────────────┼──────────┤
+│ Switch LLM   │ 1 line change │ Migration     │ Migration     │ N/A      │
+├──────────────┼───────────────┼───────────────┼───────────────┼──────────┤
+│ See prompts? │ Never         │ Yes (proxy)   │ Yes (proxy)   │ Yes      │
+└──────────────┴───────────────┴───────────────┴───────────────┴──────────┘
+```
+
+---
+
+## Turn Detection
+
+VoiceKit offers ML-powered turn detection:
+
+| Mode | Accuracy | Latency | Cost |
+|------|----------|---------|------|
+| **cloud** (default) | Best | ~100ms | Metered |
+| **heuristic** | Basic | ~0ms | Free |
+
+```typescript
+// Use heuristic fallback (free)
+const voice = new VoiceKit({
+  apiKey: 'vk_xxx',
+  turnDetection: { type: 'heuristic' },
+});
 ```
 
 ---
 
 ## Use Cases
 
-```
-APPLICATIONS
-────────────
-├─ Voice chatbots       — Customer support, virtual assistants
-├─ Educational apps     — AI tutors, language learning
-├─ Accessibility        — Voice interfaces for visually impaired
-├─ Gaming               — NPCs that talk with players
-├─ Prototyping          — Test voice-first ideas in a day
-└─ Autonomous agents    — Agents that call APIs and report back vocally
-```
-
----
-
-## Roadmap: Managed Service
-
-```
-COMING SOON
-───────────
-├─ One API key → STT + TTS + ML included
-├─ Free tier: 100 min/month
-├─ Then: $0.05/min
-├─ ElevenLabs voices catalog
-├─ Zero config, zero external accounts
-└─ Same SDK API — just add your key
-```
+- **Voice chatbots** — Customer support, virtual assistants
+- **Educational apps** — AI tutors, language learning
+- **Accessibility** — Voice interfaces for visually impaired
+- **Gaming** — NPCs that talk with players
+- **Autonomous agents** — Agents that report back vocally
 
 ---
 
 ## Documentation
 
-Full documentation: [kond.studio/docs/voicekit](https://kond.studio/docs/voicekit) *(coming soon)*
+Full documentation: [kond.studio/developers/voicekit/docs](https://kond.studio/developers/voicekit/docs)
 
 ---
 
@@ -345,7 +345,7 @@ Issues and PRs welcome on [GitHub](https://github.com/stranxik/kond-voicekit).
 │                                                                          │
 │                @kond/voicekit — built with care                          │
 │                                                                          │
-│       Voice SDK for AI agents. Framework-agnostic. Open source.         │
+│          Voice I/O for AI agents. You bring your own LLM.               │
 │                                                                          │
 │                            2025                                          │
 │                                                                          │

@@ -7,8 +7,10 @@
 
 /**
  * Supported locales
+ * - "fr" / "en": Single language mode (STT + TTS)
+ * - "multi": Multilingual mode - Deepgram Nova-3 codeswitching (auto-detects 10 languages)
  */
-export type Locale = "fr" | "en";
+export type Locale = "fr" | "en" | "multi";
 
 /**
  * Conversation state machine states
@@ -91,7 +93,9 @@ export interface VoiceKitConfig {
   voice?: string;
 
   /**
-   * Default locale for STT and TTS
+   * Locale for STT and TTS
+   * - "fr" / "en": Single language mode
+   * - "multi": Multilingual - Deepgram auto-detects FR/EN/ES/DE/IT/PT/JA/NL/RU/HI
    * @default "fr"
    */
   locale?: Locale;
@@ -134,6 +138,8 @@ export interface VoiceKitConfig {
    * Turn detection tuning
    */
   turnDetection?: {
+    /** Force specific turn detector type @default "auto" */
+    type?: "auto" | "cloud" | "onnx" | "heuristic";
     /** Minimum confidence to commit turn (0-1) @default 0.7 */
     confidenceThreshold?: number;
     /** Silence timeout before committing (ms) @default 1200 */
@@ -151,9 +157,31 @@ export interface VoiceKitConfig {
   };
 
   /**
+   * Internal timing config (for advanced use)
+   * @internal
+   */
+  timing?: {
+    /** Cooldown after TTS (ms) @default 150 */
+    cooldownMs?: number;
+    /** Grace period (ms) @default 2000 */
+    gracePeriodMs?: number;
+    /** Max silence (ms) @default 2500 */
+    maxSilenceMs?: number;
+  };
+
+  /**
    * Enable debug logging
    */
   debug?: boolean;
+
+  // ============= Advanced (rarely needed) =============
+  /**
+   * API base URL override
+   * Only needed for staging/development environments
+   * @default "https://kond.studio/api/voice/v1"
+   * @internal
+   */
+  baseUrl?: string;
 }
 
 // ============= Internal Types (not exported to user) =============
@@ -199,11 +227,28 @@ export const DEFAULT_CONFIG = {
   debug: false,
 };
 
-// ============= KOND Endpoints (internal) =============
+// ============= KOND Cloud Configuration =============
 
-export const KOND_ENDPOINTS = {
-  sttWebSocket: "wss://voice-ws.railway.app",
-  ttsStream: "https://kond.studio/api/voice/tts/stream",
-  turnDetector: "https://kond.studio/api/voice/turn-detector/predict",
-  voiceToken: "https://kond.studio/api/voice/token",
-};
+/**
+ * Default API base URL
+ * Can be overridden for staging/development
+ */
+export const DEFAULT_BASE_URL = "https://kond.studio/api/voice/v1";
+
+/**
+ * @internal Get endpoint URL from base
+ * Not exported - SDK users only set baseUrl, paths are fixed
+ */
+export function getEndpointUrl(baseUrl: string, path: string): string {
+  return `${baseUrl.replace(/\/$/, "")}${path}`;
+}
+
+/**
+ * @internal Endpoint paths (relative to baseUrl)
+ * Not exported to users - these are implementation details
+ */
+export const ENDPOINT_PATHS = {
+  token: "/token",
+  turnDetect: "/turn-detect",
+  ttsStream: "/tts/stream",
+} as const;

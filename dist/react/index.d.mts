@@ -3,11 +3,16 @@ import React$1 from 'react';
 
 /**
  * VoiceKit Configuration Types
+ *
+ * Simplified cloud-only configuration.
+ * All STT/TTS goes through KOND - you just provide your API key.
  */
 /**
  * Supported locales
+ * - "fr" / "en": Single language mode (STT + TTS)
+ * - "multi": Multilingual mode - Deepgram Nova-3 codeswitching (auto-detects 10 languages)
  */
-type Locale = "fr" | "en";
+type Locale = "fr" | "en" | "multi";
 /**
  * Conversation state machine states
  */
@@ -39,32 +44,45 @@ interface VoiceKitError {
 }
 /**
  * Main VoiceKit configuration
+ *
+ * Simple setup - just provide your API key and transcript handler:
+ *
+ * ```typescript
+ * const voice = new VoiceKit({
+ *   apiKey: "vk_live_xxx",
+ *   onTranscript: async (text) => {
+ *     const reply = await myLLM(text);
+ *     voice.speak(reply);
+ *   }
+ * });
+ * ```
  */
 interface VoiceKitConfig {
     /**
-     * KOND API key for managed SDK (vk_live_... or vk_test_...)
-     * Use this for the simplest setup with KOND platform
+     * VoiceKit API key (vk_xxx)
+     * Get your key at: https://kond.studio/developers/voicekit/keys
+     * Free tier: 100 min/month
      */
-    apiKey?: string;
-    /**
-     * Custom auth token provider for self-hosted setups
-     * Return a JWT or API key for authenticating with your services
-     */
-    getAuthToken?: () => Promise<string>;
-    /**
-     * Voice ID from the catalog (e.g., 'marie-fr', 'thomas-fr', 'emma-en')
-     */
-    voice?: string;
-    /**
-     * Default locale for STT and TTS
-     * @default "fr"
-     */
-    locale?: Locale;
+    apiKey: string;
     /**
      * Called when user finishes speaking with the final transcript
      * This is where you integrate your LLM
      */
     onTranscript: (transcript: string) => void | Promise<void>;
+    /**
+     * ElevenLabs voice ID
+     * Can be a KOND preset (marie-fr, thomas-fr, emma-en, james-en)
+     * or any custom ElevenLabs voice ID from your account
+     * @default "marie-fr"
+     */
+    voice?: string;
+    /**
+     * Locale for STT and TTS
+     * - "fr" / "en": Single language mode
+     * - "multi": Multilingual - Deepgram auto-detects FR/EN/ES/DE/IT/PT/JA/NL/RU/HI
+     * @default "fr"
+     */
+    locale?: Locale;
     /**
      * Called when conversation state changes
      */
@@ -82,67 +100,63 @@ interface VoiceKitConfig {
      */
     onSpeechActivity?: (speaking: boolean) => void;
     /**
+     * Callback when free quota is exceeded (402 response)
+     * Use this to show an upgrade prompt to users
+     */
+    onQuotaExceeded?: (upgradeUrl: string) => void;
+    /**
      * Observability callback for tracing (opt-in)
      * Use this to integrate with your observability stack (Axiom, Datadog, etc.)
      */
     onTrace?: (event: TraceEvent) => void;
     /**
-     * Custom endpoint URLs for self-hosted deployments
-     */
-    endpoints?: {
-        /** WebSocket URL for STT streaming */
-        sttWebSocket?: string;
-        /** HTTP URL for TTS streaming */
-        ttsStream?: string;
-        /** HTTP URL for turn detector API */
-        turnDetector?: string;
-        /** HTTP URL for voice token endpoint */
-        voiceToken?: string;
-    };
-    /**
-     * Turn detection configuration
+     * Turn detection tuning
      */
     turnDetection?: {
-        /** Detector type: 'auto' | 'onnx' | 'cloud' | 'heuristic' */
-        type?: "auto" | "onnx" | "cloud" | "heuristic";
-        /** Minimum confidence to commit turn (0-1) */
+        /** Force specific turn detector type @default "auto" */
+        type?: "auto" | "cloud" | "onnx" | "heuristic";
+        /** Minimum confidence to commit turn (0-1) @default 0.7 */
         confidenceThreshold?: number;
-        /** Silence timeout before committing (ms) */
+        /** Silence timeout before committing (ms) @default 1200 */
         silenceTimeoutMs?: number;
-        /** Detect backchannel responses like "mh", "ok" */
+        /** Detect backchannel responses like "mh", "ok" @default true */
         detectBackchannels?: boolean;
     };
     /**
-     * TTS configuration
+     * TTS tuning
      */
     tts?: {
-        /** Speech speed (0.5-1.5) */
+        /** Speech speed (0.5-1.5) @default 1.0 */
         speed?: number;
-        /** ElevenLabs stability (0-1) */
-        stability?: number;
-        /** ElevenLabs similarity boost (0-1) */
-        similarityBoost?: number;
     };
     /**
-     * Timing configuration
+     * Internal timing config (for advanced use)
+     * @internal
      */
     timing?: {
-        /** Cooldown after TTS before resuming (ms) */
+        /** Cooldown after TTS (ms) @default 150 */
         cooldownMs?: number;
-        /** Grace period for transcript stabilization (ms) */
+        /** Grace period (ms) @default 2000 */
         gracePeriodMs?: number;
-        /** Max silence before committing (ms) */
+        /** Max silence (ms) @default 2500 */
         maxSilenceMs?: number;
     };
     /**
      * Enable debug logging
      */
     debug?: boolean;
+    /**
+     * API base URL override
+     * Only needed for staging/development environments
+     * @default "https://kond.studio/api/voice/v1"
+     * @internal
+     */
+    baseUrl?: string;
 }
 declare const DEFAULT_CONFIG: {
+    voice: string;
     locale: Locale;
     turnDetection: {
-        type: "auto";
         confidenceThreshold: number;
         silenceTimeoutMs: number;
         detectBackchannels: boolean;
@@ -467,12 +481,22 @@ interface StreamingSTTPort {
  * Deepgram adapter configuration
  */
 interface DeepgramConfig {
-    /** WebSocket URL for STT streaming (e.g., wss://voice-ws.example.com) */
-    wsUrl: string;
-    /** Token endpoint URL (default: /api/voice/token) */
-    tokenUrl?: string;
+    /** API base URL @default "https://kond.studio/api/voice/v1" */
+    baseUrl?: string;
+    /** VoiceKit API key (vk_xxx) - required for token fetch */
+    apiKey?: string;
+    /** WebSocket URL override (normally returned by token endpoint) */
+    wsUrl?: string;
     /** Optional trace callback for observability */
     onTrace?: (event: TraceEvent) => void;
+}
+/**
+ * Auth token response from gateway
+ */
+interface TokenResponse {
+    token: string;
+    wsUrl: string;
+    expiresIn?: number;
 }
 declare class DeepgramStreamingAdapter implements StreamingSTTPort {
     private getAuthToken;
@@ -488,7 +512,7 @@ declare class DeepgramStreamingAdapter implements StreamingSTTPort {
     private audioBuffer;
     private isReconnecting;
     private static readonly MAX_BUFFER_SIZE;
-    constructor(getAuthToken: () => Promise<string>, config?: Partial<DeepgramConfig>, userId?: string);
+    constructor(getAuthToken: () => Promise<string | TokenResponse>, config?: Partial<DeepgramConfig>, userId?: string);
     startStreaming(callbacks: StreamingCallbacks, language?: string): Promise<void>;
     /**
      * Handle incoming Deepgram message
@@ -524,7 +548,11 @@ interface STTCallbacks {
 interface UseSTTConnectionOptions {
     /** User ID for session tracking */
     userId?: string;
-    /** Auth token provider for self-hosted setups */
+    /** VoiceKit API key (vk_xxx) - required if not using getAuthToken */
+    apiKey?: string;
+    /** API base URL override */
+    baseUrl?: string;
+    /** Auth token provider for self-hosted setups (alternative to apiKey) */
     getAuthToken?: () => Promise<string>;
     debug?: boolean;
 }
@@ -843,10 +871,10 @@ interface UseTurnDetectorOptions extends TurnDetectorConfig {
     type?: TurnDetectorType;
     /** Enable turn detector (default: true) */
     enabled?: boolean;
-    /** Cloud API URL (for cloud provider) */
-    cloudApiUrl?: string;
-    /** Custom auth token provider for cloud provider */
-    getAuthToken?: () => Promise<string>;
+    /** VoiceKit API key for cloud provider */
+    apiKey?: string;
+    /** Callback when quota exceeded */
+    onQuotaExceeded?: (upgradeUrl: string) => void;
 }
 interface UseTurnDetectorReturn {
     /** Provider is initialized and ready */

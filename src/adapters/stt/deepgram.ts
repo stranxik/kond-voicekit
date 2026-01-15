@@ -7,6 +7,7 @@
 
 import type { StreamingSTTPort, StreamingCallbacks, TranscriptionResult } from "../../ports/stt";
 import type { TraceEvent } from "../../types/config";
+import { getEndpointUrl, ENDPOINT_PATHS, DEFAULT_BASE_URL } from "../../types/config";
 
 // ============================================
 // CONFIGURATION
@@ -16,22 +17,23 @@ import type { TraceEvent } from "../../types/config";
  * Deepgram adapter configuration
  */
 export interface DeepgramConfig {
-  /** WebSocket URL for STT streaming (e.g., wss://voice-ws.example.com) */
-  wsUrl: string;
-  /** Token endpoint URL (default: /api/voice/token) */
-  tokenUrl?: string;
+  /** API base URL @default "https://kond.studio/api/voice/v1" */
+  baseUrl?: string;
+  /** VoiceKit API key (vk_xxx) - required for token fetch */
+  apiKey?: string;
+  /** WebSocket URL override (normally returned by token endpoint) */
+  wsUrl?: string;
   /** Optional trace callback for observability */
   onTrace?: (event: TraceEvent) => void;
 }
 
 let globalConfig: DeepgramConfig = {
-  wsUrl: "",
-  tokenUrl: "/api/voice/token",
+  baseUrl: DEFAULT_BASE_URL,
 };
 
 /**
  * Configure Deepgram adapter globally
- * Call this before creating adapters to set your backend URLs
+ * @internal Usually not needed - SDK handles this automatically
  */
 export function configureDeepgram(config: Partial<DeepgramConfig>): void {
   globalConfig = { ...globalConfig, ...config };
@@ -39,6 +41,7 @@ export function configureDeepgram(config: Partial<DeepgramConfig>): void {
 
 /**
  * Get current Deepgram config
+ * @internal
  */
 export function getDeepgramConfig(): DeepgramConfig {
   return { ...globalConfig };
@@ -55,6 +58,15 @@ interface DeepgramMessage {
   is_final?: boolean;
   speech_final?: boolean;
   message?: string;
+}
+
+/**
+ * Auth token response from gateway
+ */
+interface TokenResponse {
+  token: string;
+  wsUrl: string;
+  expiresIn?: number;
 }
 
 export class DeepgramStreamingAdapter implements StreamingSTTPort {
@@ -74,7 +86,7 @@ export class DeepgramStreamingAdapter implements StreamingSTTPort {
   private static readonly MAX_BUFFER_SIZE = 50; // ~2s at 40ms chunks
 
   constructor(
-    private getAuthToken: () => Promise<string>,
+    private getAuthToken: () => Promise<string | TokenResponse>,
     config?: Partial<DeepgramConfig>,
     userId?: string
   ) {
@@ -87,21 +99,38 @@ export class DeepgramStreamingAdapter implements StreamingSTTPort {
       throw new Error("Already streaming");
     }
 
-    if (!this.config.wsUrl) {
-      throw new Error("Deepgram wsUrl not configured. Call configureDeepgram() first.");
-    }
-
     this.callbacks = callbacks;
     this.language = language;
     this.traceId = this.generateTraceId();
     this.startTime = Date.now();
     this.audioSeconds = 0;
 
-    // Get auth token
-    const token = await this.getAuthToken();
+    // Get auth token (returns { token, wsUrl })
+    const authResult = await this.getAuthToken();
+
+    // Extract token and wsUrl
+    let token: string;
+    let baseWsUrl: string;
+
+    if (typeof authResult === "string") {
+      // Legacy: just token string, use config wsUrl
+      token = authResult;
+      if (!this.config.wsUrl) {
+        throw new Error("WebSocket URL not configured and not returned by token endpoint");
+      }
+      baseWsUrl = this.config.wsUrl;
+    } else {
+      // New: { token, wsUrl } from gateway
+      token = authResult.token;
+      baseWsUrl = authResult.wsUrl || this.config.wsUrl || "";
+    }
+
+    if (!baseWsUrl) {
+      throw new Error("WebSocket URL not available");
+    }
 
     // Connect to WebSocket
-    const wsUrl = `${this.config.wsUrl}?token=${encodeURIComponent(token)}&lang=${language}`;
+    const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}&lang=${language}`;
 
     return new Promise((resolve, reject) => {
       try {
@@ -309,27 +338,43 @@ export class DeepgramStreamingAdapter implements StreamingSTTPort {
 
 /**
  * Create a Deepgram streaming adapter
- * @param config Optional config override
+ * Uses VoiceKit gateway for authentication
+ *
+ * @param config Config with apiKey (required) and optional baseUrl
  * @param userId User ID for observability
  */
 export function createDeepgramAdapter(
-  config?: Partial<DeepgramConfig> & { tokenUrl?: string },
+  config: Partial<DeepgramConfig> & { apiKey: string },
   userId?: string
 ): DeepgramStreamingAdapter {
   const mergedConfig = { ...globalConfig, ...config };
-  const tokenUrl = mergedConfig.tokenUrl || "/api/voice/token";
+  const baseUrl = mergedConfig.baseUrl || DEFAULT_BASE_URL;
+  const tokenUrl = getEndpointUrl(baseUrl, ENDPOINT_PATHS.token);
 
-  const getAuthToken = async (): Promise<string> => {
+  const getAuthToken = async (): Promise<TokenResponse> => {
     const response = await fetch(tokenUrl, {
       method: "POST",
+      headers: {
+        "Authorization": `Bearer ${config.apiKey}`,
+      },
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error("Invalid VoiceKit API key");
+      }
+      if (response.status === 402) {
+        throw new Error("VoiceKit quota exceeded");
+      }
       throw new Error(`Failed to get voice token: ${response.status}`);
     }
 
     const data = await response.json();
-    return data.token;
+    return {
+      token: data.token,
+      wsUrl: data.wsUrl,
+      expiresIn: data.expiresIn,
+    };
   };
 
   return new DeepgramStreamingAdapter(getAuthToken, mergedConfig, userId);
@@ -337,9 +382,10 @@ export function createDeepgramAdapter(
 
 /**
  * Create a Deepgram adapter with custom auth token provider
+ * For advanced use cases where you handle token fetching yourself
  */
 export function createDeepgramAdapterWithAuth(
-  getAuthToken: () => Promise<string>,
+  getAuthToken: () => Promise<string | TokenResponse>,
   config?: Partial<DeepgramConfig>,
   userId?: string
 ): DeepgramStreamingAdapter {

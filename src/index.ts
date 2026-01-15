@@ -189,9 +189,6 @@ export {
   // Cloud
   CloudTurnDetector,
   createCloudTurnDetector,
-  createCloudTurnDetectorWithAuth,
-  configureCloudTurnDetector,
-  getCloudTurnDetectorConfig,
   // Mock
   MockTurnDetector,
   createMockTurnDetector,
@@ -200,6 +197,5 @@ export type {
   HeuristicTurnDetectorOptions,
   OnnxTurnDetectorOptions,
   CloudTurnDetectorOptions,
-  CloudTurnDetectorConfig,
   MockTurnDetectorOptions,
 } from "./adapters/turn-detector";

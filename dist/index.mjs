@@ -1,8 +1,8 @@
 // src/types/config.ts
 var DEFAULT_CONFIG = {
+  voice: "marie-fr",
   locale: "fr",
   turnDetection: {
-    type: "auto",
     confidenceThreshold: 0.7,
     silenceTimeoutMs: 1200,
     detectBackchannels: true
@@ -17,11 +17,19 @@ var DEFAULT_CONFIG = {
   },
   debug: false
 };
+var DEFAULT_BASE_URL = "https://kond.studio/api/voice/v1";
+function getEndpointUrl(baseUrl, path) {
+  return `${baseUrl.replace(/\/$/, "")}${path}`;
+}
+var ENDPOINT_PATHS = {
+  token: "/token",
+  turnDetect: "/turn-detect",
+  ttsStream: "/tts/stream"
+};
 
 // src/adapters/stt/deepgram.ts
 var globalConfig = {
-  wsUrl: "",
-  tokenUrl: "/api/voice/token"
+  baseUrl: DEFAULT_BASE_URL
 };
 function configureDeepgram(config2) {
   globalConfig = { ...globalConfig, ...config2 };
@@ -51,16 +59,28 @@ var _DeepgramStreamingAdapter = class _DeepgramStreamingAdapter {
     if (this.streaming) {
       throw new Error("Already streaming");
     }
-    if (!this.config.wsUrl) {
-      throw new Error("Deepgram wsUrl not configured. Call configureDeepgram() first.");
-    }
     this.callbacks = callbacks;
     this.language = language;
     this.traceId = this.generateTraceId();
     this.startTime = Date.now();
     this.audioSeconds = 0;
-    const token = await this.getAuthToken();
-    const wsUrl = `${this.config.wsUrl}?token=${encodeURIComponent(token)}&lang=${language}`;
+    const authResult = await this.getAuthToken();
+    let token;
+    let baseWsUrl;
+    if (typeof authResult === "string") {
+      token = authResult;
+      if (!this.config.wsUrl) {
+        throw new Error("WebSocket URL not configured and not returned by token endpoint");
+      }
+      baseWsUrl = this.config.wsUrl;
+    } else {
+      token = authResult.token;
+      baseWsUrl = authResult.wsUrl || this.config.wsUrl || "";
+    }
+    if (!baseWsUrl) {
+      throw new Error("WebSocket URL not available");
+    }
+    const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}&lang=${language}`;
     return new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(wsUrl);
@@ -232,129 +252,35 @@ _DeepgramStreamingAdapter.MAX_BUFFER_SIZE = 50;
 var DeepgramStreamingAdapter = _DeepgramStreamingAdapter;
 function createDeepgramAdapter(config2, userId) {
   const mergedConfig = { ...globalConfig, ...config2 };
-  const tokenUrl = mergedConfig.tokenUrl || "/api/voice/token";
+  const baseUrl = mergedConfig.baseUrl || DEFAULT_BASE_URL;
+  const tokenUrl = getEndpointUrl(baseUrl, ENDPOINT_PATHS.token);
   const getAuthToken = async () => {
     const response = await fetch(tokenUrl, {
-      method: "POST"
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${config2.apiKey}`
+      }
     });
     if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error("Invalid VoiceKit API key");
+      }
+      if (response.status === 402) {
+        throw new Error("VoiceKit quota exceeded");
+      }
       throw new Error(`Failed to get voice token: ${response.status}`);
     }
     const data = await response.json();
-    return data.token;
+    return {
+      token: data.token,
+      wsUrl: data.wsUrl,
+      expiresIn: data.expiresIn
+    };
   };
   return new DeepgramStreamingAdapter(getAuthToken, mergedConfig, userId);
 }
 function createDeepgramAdapterWithAuth(getAuthToken, config2, userId) {
   return new DeepgramStreamingAdapter(getAuthToken, config2, userId);
-}
-
-// src/adapters/tts/fetch-tts.ts
-var globalConfig2 = {
-  ttsStreamUrl: "/api/voice/tts/stream"
-};
-function configureFetchTTS(config2) {
-  globalConfig2 = { ...globalConfig2, ...config2 };
-}
-function getFetchTTSConfig() {
-  return { ...globalConfig2 };
-}
-var SAMPLE_RATE = 24e3;
-var FetchTTSAdapter = class {
-  constructor(options = {}) {
-    this.audioContext = null;
-    this.activeSource = null;
-    this.isCurrentlyPlaying = false;
-    this.ttsStreamUrl = options.ttsStreamUrl || globalConfig2.ttsStreamUrl;
-  }
-  /**
-   * Get or create AudioContext with correct sample rate
-   */
-  getAudioContext() {
-    if (!this.audioContext || this.audioContext.state === "closed") {
-      this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    }
-    if (this.audioContext.state === "suspended") {
-      this.audioContext.resume();
-    }
-    return this.audioContext;
-  }
-  /**
-   * Convert PCM 16-bit signed little-endian to Float32 (-1 to 1)
-   */
-  pcm16ToFloat32(pcmData) {
-    const numSamples = Math.floor(pcmData.length / 2);
-    const float32 = new Float32Array(numSamples);
-    const dataView = new DataView(
-      pcmData.buffer,
-      pcmData.byteOffset,
-      pcmData.byteLength
-    );
-    for (let i = 0; i < numSamples; i++) {
-      const int16 = dataView.getInt16(i * 2, true);
-      float32[i] = int16 / 32768;
-    }
-    return float32;
-  }
-  async synthesize(text, locale) {
-    try {
-      const response = await fetch(this.ttsStreamUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, locale })
-      });
-      if (!response.ok) {
-        if (response.status !== 0) {
-          console.warn("[FetchTTSAdapter] TTS request failed:", response.status);
-        }
-        return;
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      if (!arrayBuffer.byteLength) {
-        return;
-      }
-      this.stop();
-      const ctx = this.getAudioContext();
-      const pcmData = new Uint8Array(arrayBuffer);
-      const float32 = this.pcm16ToFloat32(pcmData);
-      const audioBuffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE);
-      audioBuffer.getChannelData(0).set(float32);
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(ctx.destination);
-      this.activeSource = source;
-      this.isCurrentlyPlaying = true;
-      source.onended = () => {
-        this.isCurrentlyPlaying = false;
-        this.activeSource = null;
-      };
-      source.start(0);
-    } catch (error) {
-      this.isCurrentlyPlaying = false;
-      if (error instanceof Error && (error.name === "AbortError" || error.name === "TypeError")) {
-        return;
-      }
-      console.error("[FetchTTSAdapter] Playback error:", error);
-      throw error;
-    }
-  }
-  stop() {
-    if (this.activeSource) {
-      try {
-        this.activeSource.stop();
-        this.activeSource.disconnect();
-      } catch {
-      }
-      this.activeSource = null;
-    }
-    this.isCurrentlyPlaying = false;
-  }
-  isPlaying() {
-    return this.isCurrentlyPlaying;
-  }
-};
-function createFetchTTSAdapter(options) {
-  return new FetchTTSAdapter(options);
 }
 
 // src/adapters/vad/silero-vad.ts
@@ -767,25 +693,10 @@ function createOnnxTurnDetector(options) {
 }
 
 // src/adapters/turn-detector/cloud.ts
-var globalConfig3 = {
-  apiUrl: "",
-  tokenUrl: "/api/voice/token"
-};
-function configureCloudTurnDetector(config2) {
-  globalConfig3 = { ...globalConfig3, ...config2 };
-}
-function getCloudTurnDetectorConfig() {
-  return { ...globalConfig3 };
-}
-var _CloudTurnDetector = class _CloudTurnDetector {
-  constructor(options = {}) {
+var CloudTurnDetector = class {
+  constructor(options) {
     this.name = "cloud";
     this.history = [];
-    this.apiUrl = "";
-    this.tokenUrl = "";
-    this.jwtToken = null;
-    this.tokenExpiresAt = 0;
-    this.isRefreshing = false;
     this.fallbackDetector = null;
     this.options = {
       timeoutMs: options.timeoutMs ?? 2e3,
@@ -796,104 +707,25 @@ var _CloudTurnDetector = class _CloudTurnDetector {
       ...DEFAULT_TURN_DETECTOR_CONFIG,
       ...options
     };
+    this.baseUrl = options.baseUrl || DEFAULT_BASE_URL;
   }
   async init() {
-    this.apiUrl = this.options.apiUrl || globalConfig3.apiUrl;
-    this.tokenUrl = this.options.tokenUrl || globalConfig3.tokenUrl || "/api/voice/token";
     if (this.config.debug) {
-      console.log(`[CloudTurnDetector] Initializing with URL: ${this.apiUrl || "(empty)"}`);
+      console.log(`[CloudTurnDetector] Initializing with KOND API`);
     }
     this.fallbackDetector = createHeuristicTurnDetector(this.config);
     await this.fallbackDetector.init();
-    const tokenOk = await this.refreshToken();
     if (this.config.debug) {
-      console.log(
-        `[CloudTurnDetector] Ready - URL: ${this.apiUrl}, JWT: ${tokenOk ? "valid" : "failed"}`
-      );
+      console.log(`[CloudTurnDetector] Ready`);
     }
   }
   /**
-   * Check if token needs refresh (expired or expiring soon)
-   */
-  needsTokenRefresh() {
-    if (!this.jwtToken) return true;
-    const now = Date.now();
-    return now >= this.tokenExpiresAt - _CloudTurnDetector.TOKEN_REFRESH_MARGIN_MS;
-  }
-  /**
-   * Parse JWT to extract expiration time
-   */
-  parseTokenExpiry(token) {
-    try {
-      const parts = token.split(".");
-      if (parts.length !== 3) return 0;
-      const payload = JSON.parse(atob(parts[1]));
-      return (payload.exp || 0) * 1e3;
-    } catch {
-      return 0;
-    }
-  }
-  /**
-   * Refresh JWT token from the app's auth endpoint
-   */
-  async refreshToken() {
-    if (this.isRefreshing) {
-      return !!this.jwtToken;
-    }
-    this.isRefreshing = true;
-    try {
-      if (this.options.getAuthToken) {
-        const token = await this.options.getAuthToken();
-        this.jwtToken = token;
-        this.tokenExpiresAt = this.parseTokenExpiry(token);
-        return true;
-      }
-      const response = await fetch(this.tokenUrl, {
-        method: "POST",
-        credentials: "include"
-      });
-      if (response.ok) {
-        const data = await response.json();
-        this.jwtToken = data.token;
-        this.tokenExpiresAt = this.parseTokenExpiry(data.token);
-        if (this.config.debug) {
-          console.log(
-            `[CloudTurnDetector] Token refreshed, expires in ${Math.round((this.tokenExpiresAt - Date.now()) / 1e3)}s`
-          );
-        }
-        return true;
-      } else {
-        console.warn(`[CloudTurnDetector] Token refresh failed: ${response.status}`);
-        return false;
-      }
-    } catch (error) {
-      console.warn("[CloudTurnDetector] Failed to get JWT token:", error);
-      return false;
-    } finally {
-      this.isRefreshing = false;
-    }
-  }
-  /**
-   * Ensure we have a valid token, refreshing if needed
-   */
-  async ensureValidToken() {
-    if (!this.needsTokenRefresh()) {
-      return true;
-    }
-    return this.refreshToken();
-  }
-  /**
-   * Predict turn state by calling remote API
+   * Predict turn state by calling KOND API
    */
   async predict(context) {
     if (this.config.debug) {
       console.log(`[CloudTurnDetector] predict() - transcript: "${context.transcript.substring(0, 30)}..."`);
     }
-    if (!this.apiUrl) {
-      console.warn("[CloudTurnDetector] No API URL configured, using fallback");
-      return this.useFallback(context, "no_api_url");
-    }
-    await this.ensureValidToken();
     try {
       const prediction = await this.callApi(context);
       if (this.config.debug) {
@@ -901,43 +733,27 @@ var _CloudTurnDetector = class _CloudTurnDetector {
       }
       return prediction;
     } catch (error) {
-      if (error instanceof Error && error.message.includes("401")) {
-        if (this.config.debug) {
-          console.log("[CloudTurnDetector] Got 401, refreshing token and retrying...");
-        }
-        const refreshed = await this.refreshToken();
-        if (refreshed) {
-          try {
-            const prediction = await this.callApi(context);
-            return prediction;
-          } catch (retryError) {
-            console.warn("[CloudTurnDetector] Retry failed:", retryError);
-          }
-        }
-      }
       console.warn("[CloudTurnDetector] API call failed, using fallback:", error);
       return this.useFallback(context, "api_error");
     }
   }
   /**
-   * Call the turn detector API
+   * Call the KOND turn detector API
    */
   async callApi(context) {
-    const headers = {
-      "Content-Type": "application/json"
-    };
-    if (this.jwtToken) {
-      headers["Authorization"] = `Bearer ${this.jwtToken}`;
-    }
     const controller = new AbortController();
     const timeoutId = setTimeout(
       () => controller.abort(),
       this.options.timeoutMs
     );
     try {
-      const response = await fetch(`${this.apiUrl}/predict`, {
+      const url = getEndpointUrl(this.baseUrl, ENDPOINT_PATHS.turnDetect);
+      const response = await fetch(url, {
         method: "POST",
-        headers,
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.options.apiKey}`
+        },
         body: JSON.stringify({
           transcript: context.transcript,
           locale: context.locale,
@@ -951,6 +767,20 @@ var _CloudTurnDetector = class _CloudTurnDetector {
         signal: controller.signal
       });
       clearTimeout(timeoutId);
+      if (response.status === 402) {
+        const data2 = await response.json();
+        if (this.config.debug) {
+          console.log("[CloudTurnDetector] Quota exceeded, using fallback");
+        }
+        if (this.options.onQuotaExceeded && data2.upgradeUrl) {
+          this.options.onQuotaExceeded(data2.upgradeUrl);
+        }
+        return this.useFallback(context, "quota_exceeded");
+      }
+      if (response.status === 401) {
+        console.warn("[CloudTurnDetector] Invalid API key (401)");
+        return this.useFallback(context, "invalid_api_key");
+      }
       if (!response.ok) {
         throw new Error(`API error: ${response.status}`);
       }
@@ -998,14 +828,8 @@ var _CloudTurnDetector = class _CloudTurnDetector {
     this.fallbackDetector = null;
   }
 };
-// Refresh token 1 minute before expiry
-_CloudTurnDetector.TOKEN_REFRESH_MARGIN_MS = 60 * 1e3;
-var CloudTurnDetector = _CloudTurnDetector;
 function createCloudTurnDetector(options) {
   return new CloudTurnDetector(options);
-}
-function createCloudTurnDetectorWithAuth(getAuthToken, options) {
-  return new CloudTurnDetector({ ...options, getAuthToken });
 }
 
 // src/adapters/turn-detector/mock.ts
@@ -1794,7 +1618,7 @@ function configureTTSStreaming(newConfig) {
 function getTTSStreamingConfig() {
   return { ...config };
 }
-var SAMPLE_RATE2 = 24e3;
+var SAMPLE_RATE = 24e3;
 var CHANNELS = 1;
 var audioContext = null;
 var isStreamPlaying = false;
@@ -1804,7 +1628,7 @@ var activeSourceNodes = [];
 var pendingBytes = null;
 function getAudioContext() {
   if (!audioContext || audioContext.state === "closed") {
-    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE2 });
+    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
   }
   if (audioContext.state === "suspended") {
     audioContext.resume();
@@ -1822,7 +1646,7 @@ function pcm16ToFloat32(pcmData) {
   return float32;
 }
 function createAudioBuffer(ctx, samples) {
-  const buffer = ctx.createBuffer(CHANNELS, samples.length, SAMPLE_RATE2);
+  const buffer = ctx.createBuffer(CHANNELS, samples.length, SAMPLE_RATE);
   buffer.getChannelData(0).set(samples);
   return buffer;
 }
@@ -1900,7 +1724,7 @@ async function waitForPlaybackComplete() {
     checkComplete();
   });
 }
-async function speakTextStreaming(text, locale = "fr", onStart, onEnd, onError, ttsModel) {
+async function speakTextStreaming(text, locale = "fr", onStart, onEnd, onError, ttsModel, voice) {
   stopStreamingTTS();
   shouldStopStream = false;
   isStreamPlaying = true;
@@ -1910,7 +1734,7 @@ async function speakTextStreaming(text, locale = "fr", onStart, onEnd, onError, 
     const response = await fetch(config.ttsStreamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, locale, ttsModel })
+      body: JSON.stringify({ text, locale, ttsModel, voice })
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: "Unknown error" }));
@@ -1951,12 +1775,12 @@ async function speakTextStreaming(text, locale = "fr", onStart, onEnd, onError, 
     pendingBytes = null;
   }
 }
-function speakTextStreamingWithCallback(text, locale = "fr", onEnd, onError, ttsModel) {
-  speakTextStreaming(text, locale, void 0, onEnd, onError, ttsModel).catch((err) => {
+function speakTextStreamingWithCallback(text, locale = "fr", onEnd, onError, ttsModel, voice) {
+  speakTextStreaming(text, locale, void 0, onEnd, onError, ttsModel, voice).catch((err) => {
     onError?.(err instanceof Error ? err : new Error("Streaming TTS failed"));
   });
 }
-async function prefetchAudio(text, locale = "fr", ttsModel) {
+async function prefetchAudio(text, locale = "fr", ttsModel, voice) {
   const abortController = new AbortController();
   const preloaded = {
     chunks: [],
@@ -1968,7 +1792,7 @@ async function prefetchAudio(text, locale = "fr", ttsModel) {
     const response = await fetch(config.ttsStreamUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, locale, ttsModel }),
+      body: JSON.stringify({ text, locale, ttsModel, voice }),
       signal: abortController.signal
     });
     if (!response.ok) {
@@ -2402,7 +2226,7 @@ function createSentenceAccumulator(onSentence, options) {
 
 // src/core/tts-queue.ts
 function createTTSQueue(options) {
-  const { locale, onStart, onEnd, onError, debug = false } = options;
+  const { locale, voice, onStart, onEnd, onError, debug = false } = options;
   const queue = [];
   let isPlaying = false;
   let isFinished = false;
@@ -2437,7 +2261,7 @@ function createTTSQueue(options) {
     isPrefetching = true;
     nextItem = item;
     log("Prefetching N+1:", item.text.substring(0, 40) + "...", item.ttsModel ? `(${item.ttsModel})` : "");
-    prefetchAudio(item.text, locale, item.ttsModel).then((preloaded) => {
+    prefetchAudio(item.text, locale, item.ttsModel, voice).then((preloaded) => {
       isPrefetching = false;
       if (isCancelled) {
         cancelPrefetch(preloaded);
@@ -2468,7 +2292,7 @@ function createTTSQueue(options) {
       const key = `${item.text}-${item.ttsModel || "default"}`;
       extendedPrefetchPending.add(key);
       log("Prefetching N+2/3:", item.text.substring(0, 30) + "...");
-      prefetchAudio(item.text, locale, item.ttsModel).then((preloaded) => {
+      prefetchAudio(item.text, locale, item.ttsModel, voice).then((preloaded) => {
         extendedPrefetchPending.delete(key);
         if (isCancelled) {
           cancelPrefetch(preloaded);
@@ -2549,7 +2373,8 @@ function createTTSQueue(options) {
             processNext();
           }
         },
-        item.ttsModel
+        item.ttsModel,
+        voice
       );
     } catch (err) {
       isPlaying = false;
@@ -2694,27 +2519,6 @@ var VoiceKit = class {
       debug: config2.debug ?? DEFAULT_CONFIG.debug
     };
     this.locale = this.config.locale || "fr";
-    this.configureEndpoints();
-  }
-  /**
-   * Configure adapter URLs from config
-   */
-  configureEndpoints() {
-    const { endpoints, getAuthToken } = this.config;
-    if (endpoints?.sttWebSocket) {
-      configureDeepgram({ wsUrl: endpoints.sttWebSocket });
-    }
-    if (endpoints?.ttsStream) {
-      configureTTSStreaming({ ttsStreamUrl: endpoints.ttsStream });
-      configureFetchTTS({ ttsStreamUrl: endpoints.ttsStream });
-    }
-    if (endpoints?.turnDetector) {
-      configureCloudTurnDetector({ apiUrl: endpoints.turnDetector });
-    }
-    if (endpoints?.voiceToken) {
-      configureDeepgram({ tokenUrl: endpoints.voiceToken });
-      configureCloudTurnDetector({ tokenUrl: endpoints.voiceToken });
-    }
   }
   /**
    * Initialize adapters and request microphone permission
@@ -2730,11 +2534,10 @@ var VoiceKit = class {
           autoGainControl: true
         }
       });
-      if (this.config.getAuthToken) {
-        this.stt = createDeepgramAdapterWithAuth(this.config.getAuthToken);
-      } else {
-        this.stt = createDeepgramAdapter();
-      }
+      this.stt = createDeepgramAdapter({
+        apiKey: this.config.apiKey,
+        baseUrl: this.config.baseUrl
+      });
       this.vad = createSileroVAD({
         threshold: 0.5,
         minSpeechDuration: 250,
@@ -2745,7 +2548,7 @@ var VoiceKit = class {
       this.turnDetector = await this.createTurnDetector(detectorType);
       await this.turnDetector.init();
       this.turnManager = createTurnManager({
-        locale: this.locale,
+        locale: this.locale === "multi" ? "fr" : this.locale,
         debug: this.config.debug,
         turnDetector: this.turnDetector ?? void 0,
         onTurnComplete: (transcript, confidence) => {
@@ -2778,23 +2581,22 @@ var VoiceKit = class {
       confidenceThreshold: this.config.turnDetection?.confidenceThreshold || 0.7,
       detectBackchannels: this.config.turnDetection?.detectBackchannels ?? true
     };
+    const cloudOptions = {
+      ...baseConfig,
+      apiKey: this.config.apiKey,
+      onQuotaExceeded: this.config.onQuotaExceeded
+    };
     switch (type) {
       case "cloud":
-        return createCloudTurnDetector({
-          ...baseConfig,
-          getAuthToken: this.config.getAuthToken
-        });
+        return createCloudTurnDetector(cloudOptions);
       case "onnx":
         return createOnnxTurnDetector(baseConfig);
       case "heuristic":
         return createHeuristicTurnDetector(baseConfig);
       case "auto":
       default:
-        if (this.config.getAuthToken || this.config.endpoints?.turnDetector) {
-          return createCloudTurnDetector({
-            ...baseConfig,
-            getAuthToken: this.config.getAuthToken
-          });
+        if (this.config.apiKey) {
+          return createCloudTurnDetector(cloudOptions);
         }
         return createHeuristicTurnDetector(baseConfig);
     }
@@ -3291,6 +3093,114 @@ async function ensureAudioContextResumed(ctx) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// src/adapters/tts/fetch-tts.ts
+var globalConfig2 = {
+  ttsStreamUrl: "/api/voice/tts/stream"
+};
+function configureFetchTTS(config2) {
+  globalConfig2 = { ...globalConfig2, ...config2 };
+}
+function getFetchTTSConfig() {
+  return { ...globalConfig2 };
+}
+var SAMPLE_RATE2 = 24e3;
+var FetchTTSAdapter = class {
+  constructor(options = {}) {
+    this.audioContext = null;
+    this.activeSource = null;
+    this.isCurrentlyPlaying = false;
+    this.ttsStreamUrl = options.ttsStreamUrl || globalConfig2.ttsStreamUrl;
+  }
+  /**
+   * Get or create AudioContext with correct sample rate
+   */
+  getAudioContext() {
+    if (!this.audioContext || this.audioContext.state === "closed") {
+      this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE2 });
+    }
+    if (this.audioContext.state === "suspended") {
+      this.audioContext.resume();
+    }
+    return this.audioContext;
+  }
+  /**
+   * Convert PCM 16-bit signed little-endian to Float32 (-1 to 1)
+   */
+  pcm16ToFloat32(pcmData) {
+    const numSamples = Math.floor(pcmData.length / 2);
+    const float32 = new Float32Array(numSamples);
+    const dataView = new DataView(
+      pcmData.buffer,
+      pcmData.byteOffset,
+      pcmData.byteLength
+    );
+    for (let i = 0; i < numSamples; i++) {
+      const int16 = dataView.getInt16(i * 2, true);
+      float32[i] = int16 / 32768;
+    }
+    return float32;
+  }
+  async synthesize(text, locale) {
+    try {
+      const response = await fetch(this.ttsStreamUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, locale })
+      });
+      if (!response.ok) {
+        if (response.status !== 0) {
+          console.warn("[FetchTTSAdapter] TTS request failed:", response.status);
+        }
+        return;
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      if (!arrayBuffer.byteLength) {
+        return;
+      }
+      this.stop();
+      const ctx = this.getAudioContext();
+      const pcmData = new Uint8Array(arrayBuffer);
+      const float32 = this.pcm16ToFloat32(pcmData);
+      const audioBuffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE2);
+      audioBuffer.getChannelData(0).set(float32);
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+      this.activeSource = source;
+      this.isCurrentlyPlaying = true;
+      source.onended = () => {
+        this.isCurrentlyPlaying = false;
+        this.activeSource = null;
+      };
+      source.start(0);
+    } catch (error) {
+      this.isCurrentlyPlaying = false;
+      if (error instanceof Error && (error.name === "AbortError" || error.name === "TypeError")) {
+        return;
+      }
+      console.error("[FetchTTSAdapter] Playback error:", error);
+      throw error;
+    }
+  }
+  stop() {
+    if (this.activeSource) {
+      try {
+        this.activeSource.stop();
+        this.activeSource.disconnect();
+      } catch {
+      }
+      this.activeSource = null;
+    }
+    this.isCurrentlyPlaying = false;
+  }
+  isPlaying() {
+    return this.isCurrentlyPlaying;
+  }
+};
+function createFetchTTSAdapter(options) {
+  return new FetchTTSAdapter(options);
+}
 export {
   CloudTurnDetector,
   DEFAULT_CONFIG,
@@ -3307,12 +3217,10 @@ export {
   analyzeTrigger,
   cancelPrefetch,
   extractSentences as chunkSentences,
-  configureCloudTurnDetector,
   configureDeepgram,
   configureFetchTTS,
   configureTTSStreaming,
   createCloudTurnDetector,
-  createCloudTurnDetectorWithAuth,
   createDeepgramAdapter,
   createDeepgramAdapterWithAuth,
   createFetchTTSAdapter,
@@ -3328,7 +3236,6 @@ export {
   ensureAudioContextResumed,
   explainEOUResult,
   extractSentences,
-  getCloudTurnDetectorConfig,
   getDeepgramConfig,
   getDeviceCapabilitySummary,
   getFetchTTSConfig,
