@@ -1,5 +1,8 @@
 /**
  * VoiceKit Configuration Types
+ *
+ * Simplified cloud-only configuration.
+ * All STT/TTS goes through KOND - you just provide your API key.
  */
 
 /**
@@ -50,31 +53,40 @@ export interface VoiceKitError {
 
 /**
  * Main VoiceKit configuration
+ *
+ * Simple setup - just provide your API key and transcript handler:
+ *
+ * ```typescript
+ * const voice = new VoiceKit({
+ *   apiKey: "vk_live_xxx",
+ *   onTranscript: async (text) => {
+ *     const reply = await myLLM(text);
+ *     voice.speak(reply);
+ *   }
+ * });
+ * ```
  */
 export interface VoiceKitConfig {
-  // ============= Authentication =============
+  // ============= Required =============
   /**
    * VoiceKit API key (vk_xxx)
-   * Get your key at: https://kond.studio/voicekit/keys
-   * Free tier: 100 min/month of cloud turn detection
+   * Get your key at: https://kond.studio/developers/voicekit/keys
+   * Free tier: 100 min/month
    */
-  apiKey?: string;
+  apiKey: string;
 
   /**
-   * Custom auth token provider for self-hosted setups
-   * Return a JWT or API key for authenticating with your services
+   * Called when user finishes speaking with the final transcript
+   * This is where you integrate your LLM
    */
-  getAuthToken?: () => Promise<string>;
-
-  /**
-   * Callback when free quota is exceeded (402 response)
-   * Use this to show an upgrade prompt to users
-   */
-  onQuotaExceeded?: (upgradeUrl: string) => void;
+  onTranscript: (transcript: string) => void | Promise<void>;
 
   // ============= Voice Settings =============
   /**
-   * Voice ID from the catalog (e.g., 'marie-fr', 'thomas-fr', 'emma-en')
+   * ElevenLabs voice ID
+   * Can be a KOND preset (marie-fr, thomas-fr, emma-en, james-en)
+   * or any custom ElevenLabs voice ID from your account
+   * @default "marie-fr"
    */
   voice?: string;
 
@@ -84,14 +96,7 @@ export interface VoiceKitConfig {
    */
   locale?: Locale;
 
-  // ============= Required Callback =============
-  /**
-   * Called when user finishes speaking with the final transcript
-   * This is where you integrate your LLM
-   */
-  onTranscript: (transcript: string) => void | Promise<void>;
-
-  // ============= Optional Callbacks =============
+  // ============= Callbacks =============
   /**
    * Called when conversation state changes
    */
@@ -113,65 +118,36 @@ export interface VoiceKitConfig {
   onSpeechActivity?: (speaking: boolean) => void;
 
   /**
+   * Callback when free quota is exceeded (402 response)
+   * Use this to show an upgrade prompt to users
+   */
+  onQuotaExceeded?: (upgradeUrl: string) => void;
+
+  /**
    * Observability callback for tracing (opt-in)
    * Use this to integrate with your observability stack (Axiom, Datadog, etc.)
    */
   onTrace?: (event: TraceEvent) => void;
 
-  // ============= Advanced: Self-hosted Endpoints =============
+  // ============= Advanced Tuning =============
   /**
-   * Custom endpoint URLs for self-hosted deployments
-   */
-  endpoints?: {
-    /** WebSocket URL for STT streaming */
-    sttWebSocket?: string;
-    /** HTTP URL for TTS streaming */
-    ttsStream?: string;
-    /** HTTP URL for turn detector API */
-    turnDetector?: string;
-    /** HTTP URL for voice token endpoint */
-    voiceToken?: string;
-  };
-
-  // ============= Advanced: Turn Detection Tuning =============
-  /**
-   * Turn detection configuration
+   * Turn detection tuning
    */
   turnDetection?: {
-    /** Detector type: 'auto' | 'onnx' | 'cloud' | 'heuristic' */
-    type?: "auto" | "onnx" | "cloud" | "heuristic";
-    /** Minimum confidence to commit turn (0-1) */
+    /** Minimum confidence to commit turn (0-1) @default 0.7 */
     confidenceThreshold?: number;
-    /** Silence timeout before committing (ms) */
+    /** Silence timeout before committing (ms) @default 1200 */
     silenceTimeoutMs?: number;
-    /** Detect backchannel responses like "mh", "ok" */
+    /** Detect backchannel responses like "mh", "ok" @default true */
     detectBackchannels?: boolean;
   };
 
-  // ============= Advanced: TTS Tuning =============
   /**
-   * TTS configuration
+   * TTS tuning
    */
   tts?: {
-    /** Speech speed (0.5-1.5) */
+    /** Speech speed (0.5-1.5) @default 1.0 */
     speed?: number;
-    /** ElevenLabs stability (0-1) */
-    stability?: number;
-    /** ElevenLabs similarity boost (0-1) */
-    similarityBoost?: number;
-  };
-
-  // ============= Advanced: Timing Tuning =============
-  /**
-   * Timing configuration
-   */
-  timing?: {
-    /** Cooldown after TTS before resuming (ms) */
-    cooldownMs?: number;
-    /** Grace period for transcript stabilization (ms) */
-    gracePeriodMs?: number;
-    /** Max silence before committing (ms) */
-    maxSilenceMs?: number;
   };
 
   /**
@@ -180,12 +156,34 @@ export interface VoiceKitConfig {
   debug?: boolean;
 }
 
+// ============= Internal Types (not exported to user) =============
+
+/**
+ * @internal Full config with defaults applied
+ */
+export interface ResolvedConfig extends Required<Omit<VoiceKitConfig,
+  'onStateChange' | 'onError' | 'onBargeIn' | 'onSpeechActivity' | 'onQuotaExceeded' | 'onTrace'
+>> {
+  onStateChange?: (state: ConversationState) => void;
+  onError?: (error: VoiceKitError) => void;
+  onBargeIn?: () => void;
+  onSpeechActivity?: (speaking: boolean) => void;
+  onQuotaExceeded?: (upgradeUrl: string) => void;
+  onTrace?: (event: TraceEvent) => void;
+  // Internal timing config
+  timing: {
+    cooldownMs: number;
+    gracePeriodMs: number;
+    maxSilenceMs: number;
+  };
+}
+
 // ============= Default Values =============
 
 export const DEFAULT_CONFIG = {
+  voice: "marie-fr",
   locale: "fr" as Locale,
   turnDetection: {
-    type: "auto" as const,
     confidenceThreshold: 0.7,
     silenceTimeoutMs: 1200,
     detectBackchannels: true,
@@ -199,4 +197,13 @@ export const DEFAULT_CONFIG = {
     maxSilenceMs: 2500,
   },
   debug: false,
+};
+
+// ============= KOND Endpoints (internal) =============
+
+export const KOND_ENDPOINTS = {
+  sttWebSocket: "wss://voice-ws.railway.app",
+  ttsStream: "https://kond.studio/api/voice/tts/stream",
+  turnDetector: "https://kond.studio/api/voice/turn-detector/predict",
+  voiceToken: "https://kond.studio/api/voice/token",
 };
