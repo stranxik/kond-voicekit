@@ -59,8 +59,21 @@ interface VoiceKitConfig {
      * VoiceKit API key (vk_xxx)
      * Get your key at: https://kond.studio/developers/voicekit/keys
      * Free tier: 100 min/month
+     *
+     * Either `apiKey` OR `token`+`tokenWsUrl` is required.
      */
-    apiKey: string;
+    apiKey?: string;
+    /**
+     * Pre-fetched token for direct connection (bypasses key exchange)
+     * Use this when you've already obtained a token server-side.
+     * Requires `tokenWsUrl` to be set.
+     */
+    token?: string;
+    /**
+     * WebSocket URL for direct token connection
+     * Required when using `token` instead of `apiKey`.
+     */
+    tokenWsUrl?: string;
     /**
      * Called when user finishes speaking with the final transcript
      * This is where you integrate your LLM
@@ -149,6 +162,13 @@ interface VoiceKitConfig {
      * @internal
      */
     baseUrl?: string;
+    /**
+     * Path to audio worklet processor script
+     * The worklet handles audio capture and resampling for STT.
+     * Users need to copy `audio-processor.worklet.js` to their public folder.
+     * @default "/audio-processor.worklet.js"
+     */
+    workletUrl?: string;
 }
 declare const DEFAULT_CONFIG: {
     voice: string;
@@ -210,6 +230,9 @@ declare class VoiceKit {
     private turnManager;
     private mediaStream;
     private isInitialized;
+    private audioContext;
+    private audioWorklet;
+    private audioSource;
     private ttsQueue;
     private sentenceAccumulator;
     private currentTranscript;
@@ -1323,8 +1346,10 @@ declare function createOnnxTurnDetector(options?: OnnxTurnDetectorOptions): Turn
  */
 
 interface CloudTurnDetectorOptions extends TurnDetectorConfig {
-    /** VoiceKit API key (vk_xxx) - required */
-    apiKey: string;
+    /** VoiceKit API key (vk_xxx) - either apiKey or token required */
+    apiKey?: string;
+    /** JWT token for authentication (alternative to apiKey, for demo/SSR) */
+    token?: string;
     /** API base URL @default "https://kond.studio/api/voice/v1" */
     baseUrl?: string;
     /** Callback when quota exceeded (402 response) */
@@ -1353,6 +1378,10 @@ declare class CloudTurnDetector implements TurnDetectorProvider {
      * Predict turn state by calling KOND API
      */
     predict(context: TurnContext): Promise<TurnPrediction>;
+    /**
+     * Get the auth token (apiKey or JWT token)
+     */
+    private getAuthToken;
     /**
      * Call the KOND turn detector API
      */

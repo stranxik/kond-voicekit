@@ -735,6 +735,12 @@ var CloudTurnDetector = class {
     }
   }
   /**
+   * Get the auth token (apiKey or JWT token)
+   */
+  getAuthToken() {
+    return this.options.token || this.options.apiKey || "";
+  }
+  /**
    * Call the KOND turn detector API
    */
   async callApi(context) {
@@ -749,7 +755,7 @@ var CloudTurnDetector = class {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.options.apiKey}`
+          "Authorization": `Bearer ${this.getAuthToken()}`
         },
         body: JSON.stringify({
           transcript: context.transcript,
@@ -2371,6 +2377,185 @@ function selectTtsModelWithReason(text, context) {
   return { model: "eleven_turbo_v2_5", reason: "default_turbo" };
 }
 
+// src/core/worklet-source.ts
+var AUDIO_PROCESSOR_WORKLET_SOURCE = `
+class AudioCaptureProcessor extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    this.isCapturing = true;
+    const processorOptions = options.processorOptions || {};
+    this.inputSampleRate = processorOptions.inputSampleRate || sampleRate || 48000;
+    this.outputSampleRate = processorOptions.outputSampleRate || 16000;
+    this.downsampleRatio = this.inputSampleRate / this.outputSampleRate;
+    this.CHUNK_SIZE = 640;
+    this.buffer = new Float32Array(this.CHUNK_SIZE);
+    this.bufferIndex = 0;
+    this.sampleAccumulator = 0;
+    this.RMS_THRESHOLD = 0.015;
+    this.RMS_HISTORY_SIZE = 5; 
+    this.rmsHistory = [];
+    this.RMS_FLOOR = 0.008;
+    this.RMS_CEILING = 0.08;
+    this.port.onmessage = (event) => {
+      if (event.data.type === "stop") {
+        this.isCapturing = false;
+        if (this.bufferIndex > 0) {
+          const remaining = this.buffer.slice(0, this.bufferIndex);
+          const rms = this.calculateRMS(remaining);
+          const speechProbability = this.calculateSpeechProbability(rms);
+          this.port.postMessage({
+            type: "audio",
+            data: remaining,
+            rms: rms,
+            isSpeaking: rms > this.RMS_THRESHOLD,
+            speechProbability: speechProbability,
+          });
+          this.bufferIndex = 0;
+        }
+      } else if (event.data.type === "start") {
+        this.isCapturing = true;
+        this.bufferIndex = 0;
+        this.sampleAccumulator = 0;
+        this.rmsHistory = []; 
+      } else if (event.data.type === "setThreshold") {
+        this.RMS_THRESHOLD = event.data.threshold;
+      }
+    };
+  }
+  calculateRMS(samples) {
+    let sum = 0;
+    for (let i = 0; i < samples.length; i++) {
+      sum += samples[i] * samples[i];
+    }
+    return Math.sqrt(sum / samples.length);
+  }
+  calculateSpeechProbability(currentRms) {
+    this.rmsHistory.push(currentRms);
+    if (this.rmsHistory.length > this.RMS_HISTORY_SIZE) {
+      this.rmsHistory.shift();
+    }
+    const avgRms =
+      this.rmsHistory.reduce((a, b) => a + b, 0) / this.rmsHistory.length;
+    if (avgRms <= this.RMS_FLOOR) {
+      return 0;
+    }
+    if (avgRms >= this.RMS_CEILING) {
+      return 1;
+    }
+    return (avgRms - this.RMS_FLOOR) / (this.RMS_CEILING - this.RMS_FLOOR);
+  }
+  downsample(inputSamples) {
+    if (this.downsampleRatio <= 1) {
+      return inputSamples;
+    }
+    const outputLength = Math.floor(inputSamples.length / this.downsampleRatio);
+    const output = new Float32Array(outputLength);
+    for (let i = 0; i < outputLength; i++) {
+      const srcIndex = i * this.downsampleRatio;
+      const srcIndexFloor = Math.floor(srcIndex);
+      const srcIndexCeil = Math.min(srcIndexFloor + 1, inputSamples.length - 1);
+      const fraction = srcIndex - srcIndexFloor;
+      output[i] =
+        inputSamples[srcIndexFloor] * (1 - fraction) +
+        inputSamples[srcIndexCeil] * fraction;
+    }
+    return output;
+  }
+  process(inputs, outputs, parameters) {
+    const input = inputs[0];
+    if (input && input.length > 0 && this.isCapturing) {
+      const inputChannel = input[0];
+      if (inputChannel && inputChannel.length > 0) {
+        const downsampled = this.downsample(inputChannel);
+        for (let i = 0; i < downsampled.length; i++) {
+          this.buffer[this.bufferIndex++] = downsampled[i];
+          if (this.bufferIndex >= this.CHUNK_SIZE) {
+            const audioData = new Float32Array(this.buffer);
+            const rms = this.calculateRMS(audioData);
+            const speechProbability = this.calculateSpeechProbability(rms);
+            this.port.postMessage({
+              type: "audio",
+              data: audioData,
+              rms: rms,
+              isSpeaking: rms > this.RMS_THRESHOLD,
+              speechProbability: speechProbability,
+            });
+            this.bufferIndex = 0;
+          }
+        }
+      }
+    }
+    return true;
+  }
+}
+registerProcessor("audio-capture-processor", AudioCaptureProcessor);
+`;
+var WORKLET_VERSION = "0.1.1";
+
+// src/core/worklet-loader.ts
+var CDN_BASE_URL = "https://kond.studio/sdk/voicekit";
+var createLogger = (debug) => debug ? console.log.bind(console, "[VoiceKit]") : () => {
+};
+async function loadAudioWorklet(audioContext2, options = {}) {
+  const { workletUrl, debug } = options;
+  const log = createLogger(debug);
+  if (workletUrl) {
+    log("Loading worklet from custom URL:", workletUrl);
+    try {
+      await audioContext2.audioWorklet.addModule(workletUrl);
+      log("Worklet loaded successfully (custom URL)");
+      return;
+    } catch (error) {
+      throw new Error(
+        `[VoiceKit] Failed to load worklet from custom URL: ${workletUrl}
+Error: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  try {
+    const blob = new Blob([AUDIO_PROCESSOR_WORKLET_SOURCE], {
+      type: "application/javascript"
+    });
+    const blobUrl = URL.createObjectURL(blob);
+    log("Loading worklet from Blob URL...");
+    await audioContext2.audioWorklet.addModule(blobUrl);
+    URL.revokeObjectURL(blobUrl);
+    log("Worklet loaded successfully (Blob URL)");
+    return;
+  } catch (blobError) {
+    log(
+      "Blob URL failed (likely CSP restriction), trying CDN fallback...",
+      blobError
+    );
+  }
+  const cdnUrl = `${CDN_BASE_URL}/v${WORKLET_VERSION}/audio-processor.worklet.js`;
+  try {
+    log("Loading worklet from CDN:", cdnUrl);
+    await audioContext2.audioWorklet.addModule(cdnUrl);
+    log("Worklet loaded successfully (CDN)");
+    return;
+  } catch (cdnError) {
+    throw new Error(
+      `[VoiceKit] Failed to load audio worklet.
+
+Blob URL was blocked (likely by CSP) and CDN fallback also failed.
+
+To fix this, choose one of these options:
+
+1. Add 'blob:' to your Content-Security-Policy script-src directive:
+   script-src 'self' blob:;
+
+2. Add the KOND CDN to your CSP:
+   script-src 'self' ${CDN_BASE_URL};
+
+3. Self-host the worklet and pass the URL:
+   new VoiceKit({ workletUrl: '/path/to/audio-processor.worklet.js' })
+
+CDN Error: ${cdnError instanceof Error ? cdnError.message : String(cdnError)}`
+    );
+  }
+}
+
 // src/voicekit.ts
 var VoiceKit = class {
   constructor(config2) {
@@ -2383,12 +2568,23 @@ var VoiceKit = class {
     this.turnManager = null;
     this.mediaStream = null;
     this.isInitialized = false;
+    // Audio capture for routing to STT
+    this.audioContext = null;
+    this.audioWorklet = null;
+    this.audioSource = null;
     // TTS queue for speaking
     this.ttsQueue = null;
     this.sentenceAccumulator = null;
     // Current transcript state
     this.currentTranscript = "";
     this.isProcessing = false;
+    const hasApiKey = !!config2.apiKey;
+    const hasToken = !!config2.token && !!config2.tokenWsUrl;
+    if (!hasApiKey && !hasToken) {
+      throw new Error(
+        "VoiceKit requires either 'apiKey' or both 'token' and 'tokenWsUrl' for authentication"
+      );
+    }
     this.config = {
       ...config2,
       locale: config2.locale || DEFAULT_CONFIG.locale,
@@ -2413,10 +2609,27 @@ var VoiceKit = class {
           autoGainControl: true
         }
       });
-      this.stt = createDeepgramAdapter({
-        apiKey: this.config.apiKey,
-        baseUrl: this.config.baseUrl
+      this.audioContext = new AudioContext();
+      await loadAudioWorklet(this.audioContext, {
+        workletUrl: this.config.workletUrl,
+        debug: this.config.debug
       });
+      if (this.config.debug) {
+        console.log("[VoiceKit] AudioContext and worklet initialized");
+      }
+      if (this.config.token && this.config.tokenWsUrl) {
+        const token = this.config.token;
+        const wsUrl = this.config.tokenWsUrl;
+        this.stt = createDeepgramAdapterWithAuth(
+          async () => ({ token, wsUrl }),
+          { baseUrl: this.config.baseUrl }
+        );
+      } else {
+        this.stt = createDeepgramAdapter({
+          apiKey: this.config.apiKey,
+          baseUrl: this.config.baseUrl
+        });
+      }
       this.vad = createSileroVAD({
         threshold: 0.5,
         minSpeechDuration: 250,
@@ -2463,8 +2676,11 @@ var VoiceKit = class {
     const cloudOptions = {
       ...baseConfig,
       apiKey: this.config.apiKey,
+      token: this.config.token,
+      // For demo/SSR mode
       onQuotaExceeded: this.config.onQuotaExceeded
     };
+    const hasCloudAuth = this.config.apiKey || this.config.token;
     switch (type) {
       case "cloud":
         return createCloudTurnDetector(cloudOptions);
@@ -2474,7 +2690,7 @@ var VoiceKit = class {
         return createHeuristicTurnDetector(baseConfig);
       case "auto":
       default:
-        if (this.config.apiKey) {
+        if (hasCloudAuth) {
           return createCloudTurnDetector(cloudOptions);
         }
         return createHeuristicTurnDetector(baseConfig);
@@ -2495,6 +2711,34 @@ var VoiceKit = class {
     }
     try {
       this.setState("connecting");
+      if (this.audioContext && this.mediaStream) {
+        this.audioSource = this.audioContext.createMediaStreamSource(this.mediaStream);
+        this.audioWorklet = new AudioWorkletNode(
+          this.audioContext,
+          "audio-capture-processor",
+          {
+            processorOptions: {
+              inputSampleRate: this.audioContext.sampleRate,
+              outputSampleRate: 16e3
+              // Deepgram expects 16kHz
+            }
+          }
+        );
+        this.audioSource.connect(this.audioWorklet);
+        this.audioWorklet.port.onmessage = (e) => {
+          if (e.data.type !== "audio") return;
+          const sendingStates = ["listening", "processing"];
+          if (sendingStates.includes(this.state) && this.stt) {
+            this.stt.sendAudio(e.data.data);
+          }
+          if (this.turnManager && typeof e.data.speechProbability === "number") {
+            this.turnManager.handleVADProbability(e.data.speechProbability);
+          }
+        };
+        if (this.config.debug) {
+          console.log("[VoiceKit] Audio worklet connected");
+        }
+      }
       await this.stt.startStreaming(
         {
           onInterim: (result) => this.handleInterimTranscript(result.text, result.confidence),
@@ -2531,6 +2775,15 @@ var VoiceKit = class {
     this.turnManager?.reset();
     this.ttsQueue?.cancel();
     stopStreamingTTS();
+    if (this.audioWorklet) {
+      this.audioWorklet.port.postMessage({ type: "stop" });
+      this.audioWorklet.disconnect();
+      this.audioWorklet = null;
+    }
+    if (this.audioSource) {
+      this.audioSource.disconnect();
+      this.audioSource = null;
+    }
     this.currentTranscript = "";
     this.isProcessing = false;
     this.setState("idle");
@@ -2698,6 +2951,11 @@ var VoiceKit = class {
       this.mediaStream.getTracks().forEach((track) => track.stop());
       this.mediaStream = null;
     }
+    if (this.audioContext) {
+      this.audioContext.close().catch(() => {
+      });
+      this.audioContext = null;
+    }
     this.turnDetector?.destroy();
     this.turnManager?.destroy();
     this.isInitialized = false;
@@ -2716,7 +2974,11 @@ function useVoiceKit(options) {
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
+  const hasAuth = options.apiKey || options.token && options.tokenWsUrl;
   useEffect(() => {
+    if (!hasAuth) {
+      return;
+    }
     const config2 = {
       ...optionsRef.current,
       onTranscript: (transcript) => optionsRef.current.onTranscript(transcript),
@@ -2730,7 +2992,7 @@ function useVoiceKit(options) {
       voiceKitRef.current?.destroy();
       voiceKitRef.current = null;
     };
-  }, []);
+  }, [hasAuth, options.apiKey, options.token, options.tokenWsUrl]);
   const start = useCallback(async () => {
     setError(null);
     try {

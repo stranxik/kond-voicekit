@@ -63,3 +63,14 @@ export {
   ensureAudioContextResumed,
   sleep,
 } from "./utils/browser";
+
+// Worklet Loader (smart loading with fallbacks)
+export {
+  loadAudioWorklet,
+  getCDNWorkletUrl,
+  getLatestCDNWorkletUrl,
+} from "./worklet-loader";
+export type { WorkletLoaderOptions } from "./worklet-loader";
+
+// Worklet Source (embedded code)
+export { AUDIO_PROCESSOR_WORKLET_SOURCE, WORKLET_VERSION } from "./worklet-source";

@@ -38,7 +38,7 @@ import type { VADProvider } from "./ports/vad";
 import type { TurnDetectorProvider } from "./ports/turn-detector";
 
 // Adapters
-import { createDeepgramAdapter } from "./adapters/stt";
+import { createDeepgramAdapter, createDeepgramAdapterWithAuth } from "./adapters/stt";
 import { createSileroVAD } from "./adapters/vad";
 import {
   createHeuristicTurnDetector,
@@ -52,6 +52,7 @@ import { createTTSQueue } from "./core/tts-queue";
 import { createSentenceAccumulator } from "./core/sentence-chunker";
 import { configureTTSStreaming, stopStreamingTTS } from "./core/tts-streaming";
 import { selectTtsModel } from "./core/tts-model-router";
+import { loadAudioWorklet } from "./core/worklet-loader";
 
 /**
  * VoiceKit instance
@@ -71,6 +72,11 @@ export class VoiceKit {
   private mediaStream: MediaStream | null = null;
   private isInitialized = false;
 
+  // Audio capture for routing to STT
+  private audioContext: AudioContext | null = null;
+  private audioWorklet: AudioWorkletNode | null = null;
+  private audioSource: MediaStreamAudioSourceNode | null = null;
+
   // TTS queue for speaking
   private ttsQueue: ReturnType<typeof createTTSQueue> | null = null;
   private sentenceAccumulator: ReturnType<typeof createSentenceAccumulator> | null = null;
@@ -80,6 +86,16 @@ export class VoiceKit {
   private isProcessing = false;
 
   constructor(config: VoiceKitConfig) {
+    // Validate authentication: either apiKey OR (token + tokenWsUrl) required
+    const hasApiKey = !!config.apiKey;
+    const hasToken = !!config.token && !!config.tokenWsUrl;
+
+    if (!hasApiKey && !hasToken) {
+      throw new Error(
+        "VoiceKit requires either 'apiKey' or both 'token' and 'tokenWsUrl' for authentication"
+      );
+    }
+
     this.config = {
       ...config,
       locale: config.locale || DEFAULT_CONFIG.locale,
@@ -109,11 +125,39 @@ export class VoiceKit {
         },
       });
 
-      // Initialize STT adapter (cloud only via KOND)
-      this.stt = createDeepgramAdapter({
-        apiKey: this.config.apiKey,
-        baseUrl: this.config.baseUrl,
+      // Setup AudioContext for audio capture
+      // The worklet will be created in start() so it can be recreated after stop()
+      this.audioContext = new AudioContext();
+
+      // Load worklet with intelligent fallback strategy:
+      // 1. Custom URL if provided (config.workletUrl)
+      // 2. Blob URL from embedded source (zero-config)
+      // 3. CDN fallback if Blob fails (CSP restrictions)
+      await loadAudioWorklet(this.audioContext, {
+        workletUrl: this.config.workletUrl,
+        debug: this.config.debug,
       });
+
+      if (this.config.debug) {
+        console.log("[VoiceKit] AudioContext and worklet initialized");
+      }
+
+      // Initialize STT adapter (cloud only via KOND)
+      if (this.config.token && this.config.tokenWsUrl) {
+        // Direct token mode: use pre-fetched token (for demo/server-side token exchange)
+        const token = this.config.token;
+        const wsUrl = this.config.tokenWsUrl;
+        this.stt = createDeepgramAdapterWithAuth(
+          async () => ({ token, wsUrl }),
+          { baseUrl: this.config.baseUrl }
+        );
+      } else {
+        // API key mode: SDK handles token exchange
+        this.stt = createDeepgramAdapter({
+          apiKey: this.config.apiKey!,
+          baseUrl: this.config.baseUrl,
+        });
+      }
 
       // Initialize VAD adapter
       this.vad = createSileroVAD({
@@ -170,11 +214,16 @@ export class VoiceKit {
     };
 
     // Cloud detector options (cloud only via KOND)
+    // Supports both apiKey and token authentication
     const cloudOptions = {
       ...baseConfig,
       apiKey: this.config.apiKey,
+      token: this.config.token, // For demo/SSR mode
       onQuotaExceeded: this.config.onQuotaExceeded,
     };
+
+    // Check if we have valid auth for cloud detector
+    const hasCloudAuth = this.config.apiKey || this.config.token;
 
     switch (type) {
       case "cloud":
@@ -186,8 +235,8 @@ export class VoiceKit {
         return createHeuristicTurnDetector(baseConfig);
       case "auto":
       default:
-        // Auto: use cloud if apiKey available, otherwise heuristic fallback
-        if (this.config.apiKey) {
+        // Auto: use cloud if apiKey or token available, otherwise heuristic fallback
+        if (hasCloudAuth) {
           return createCloudTurnDetector(cloudOptions);
         }
         return createHeuristicTurnDetector(baseConfig);
@@ -211,6 +260,47 @@ export class VoiceKit {
 
     try {
       this.setState("connecting");
+
+      // Create audio worklet for capturing and routing audio to STT
+      // This must be done in start() so it can be recreated after stop()
+      if (this.audioContext && this.mediaStream) {
+        this.audioSource = this.audioContext.createMediaStreamSource(this.mediaStream);
+        this.audioWorklet = new AudioWorkletNode(
+          this.audioContext,
+          "audio-capture-processor",
+          {
+            processorOptions: {
+              inputSampleRate: this.audioContext.sampleRate,
+              outputSampleRate: 16000, // Deepgram expects 16kHz
+            },
+          }
+        );
+
+        // Connect source to worklet (don't connect to destination to avoid feedback)
+        this.audioSource.connect(this.audioWorklet);
+
+        // Setup audio routing from worklet to STT
+        // This is the critical part that sends microphone audio to Deepgram
+        this.audioWorklet.port.onmessage = (e) => {
+          if (e.data.type !== "audio") return;
+
+          // Route audio to STT when in listening or processing state
+          const sendingStates: ConversationState[] = ["listening", "processing"];
+          if (sendingStates.includes(this.state) && this.stt) {
+            // sendAudio accepts Float32Array or ArrayBuffer
+            (this.stt as any).sendAudio(e.data.data);
+          }
+
+          // Feed speech probability to turn manager for better turn detection
+          if (this.turnManager && typeof e.data.speechProbability === "number") {
+            this.turnManager.handleVADProbability(e.data.speechProbability);
+          }
+        };
+
+        if (this.config.debug) {
+          console.log("[VoiceKit] Audio worklet connected");
+        }
+      }
 
       // Start STT streaming
       await this.stt!.startStreaming(
@@ -253,6 +343,17 @@ export class VoiceKit {
     this.turnManager?.reset();
     this.ttsQueue?.cancel();
     stopStreamingTTS();
+
+    // Cleanup audio worklet (but keep AudioContext for restart)
+    if (this.audioWorklet) {
+      this.audioWorklet.port.postMessage({ type: "stop" });
+      this.audioWorklet.disconnect();
+      this.audioWorklet = null;
+    }
+    if (this.audioSource) {
+      this.audioSource.disconnect();
+      this.audioSource = null;
+    }
 
     this.currentTranscript = "";
     this.isProcessing = false;
@@ -471,6 +572,12 @@ export class VoiceKit {
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
       this.mediaStream = null;
+    }
+
+    // Close AudioContext (only on destroy, not stop)
+    if (this.audioContext) {
+      this.audioContext.close().catch(() => {});
+      this.audioContext = null;
     }
 
     // Cleanup adapters

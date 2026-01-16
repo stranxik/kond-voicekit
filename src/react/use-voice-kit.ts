@@ -79,8 +79,16 @@ export function useVoiceKit(options: UseVoiceKitOptions): UseVoiceKitReturn {
     optionsRef.current = options;
   }, [options]);
 
-  // Create VoiceKit instance on mount
+  // Create VoiceKit instance when auth is available
+  // Dependencies: apiKey OR (token + tokenWsUrl)
+  const hasAuth = options.apiKey || (options.token && options.tokenWsUrl);
+
   useEffect(() => {
+    // Don't create instance until we have auth
+    if (!hasAuth) {
+      return;
+    }
+
     const config: VoiceKitConfig = {
       ...optionsRef.current,
       onTranscript: (transcript) => optionsRef.current.onTranscript(transcript),
@@ -97,7 +105,7 @@ export function useVoiceKit(options: UseVoiceKitOptions): UseVoiceKitReturn {
       voiceKitRef.current?.destroy();
       voiceKitRef.current = null;
     };
-  }, []); // Only on mount
+  }, [hasAuth, options.apiKey, options.token, options.tokenWsUrl]); // Recreate when auth changes
 
   const start = useCallback(async () => {
     setError(null);

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceKit Demo Agent - Vanilla JS</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>VoiceKit Demo Agent</h1>
+      <p>Voice AI example using @kond/voicekit (Vanilla JS)</p>
+    </header>
+
+    <!-- Configuration Panel -->
+    <div class="config-panel">
+      <div class="config-row">
+        <div class="config-input">
+          <label class="config-label">LLM Provider</label>
+          <select id="provider">
+            <option value="echo">Echo (No LLM)</option>
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="openai">GPT (OpenAI)</option>
+            <option value="ollama">Ollama (Local)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="config-row" id="api-key-row" style="display: none;">
+        <div class="config-input">
+          <label class="config-label">API Key</label>
+          <input type="password" id="api-key" placeholder="sk-...">
+        </div>
+        <div class="config-input" style="max-width: 180px;">
+          <label class="config-label">Model (optional)</label>
+          <input type="text" id="model" placeholder="claude-3-haiku">
+        </div>
+      </div>
+
+      <div class="config-row" id="ollama-row" style="display: none;">
+        <div class="config-input">
+          <label class="config-label">Ollama URL</label>
+          <input type="text" id="ollama-url" value="http://localhost:11434" placeholder="http://localhost:11434">
+        </div>
+        <div class="config-input" style="max-width: 180px;">
+          <label class="config-label">Model (optional)</label>
+          <input type="text" id="ollama-model" placeholder="llama3.2">
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Message -->
+    <div class="error-message" id="error" style="display: none;"></div>
+
+    <!-- Transcript Area -->
+    <div class="transcript-area" id="transcript">
+      <div class="empty-state" id="empty-state">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+        </svg>
+        <p>Click "Start Voice" and speak</p>
+        <p id="mode-info" style="font-size: 0.7rem; margin-top: 0.5rem;">Echo mode: your speech will be repeated back</p>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <div class="status-indicator">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Ready</span>
+      </div>
+      <span id="provider-label" style="color: var(--text-muted);">Echo Mode</span>
+    </div>
+
+    <!-- Voice Button -->
+    <button class="voice-button start" id="voice-button">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+        <line x1="12" y1="19" x2="12" y2="23" />
+        <line x1="8" y1="23" x2="16" y2="23" />
+      </svg>
+      <span id="button-text">Start Voice</span>
+    </button>
+
+    <p class="info-text">
+      Powered by <a href="https://github.com/stranxik/kond/tree/main/packages/voicekit" target="_blank" rel="noopener noreferrer">@kond/voicekit</a>
+    </p>
+  </div>
+
+  <!-- Load VoiceKit from CDN (when published) or local bundle -->
+  <!-- For now, this example requires building the SDK first -->
+  <script type="module" src="script.js"></script>
+</body>
+</html>

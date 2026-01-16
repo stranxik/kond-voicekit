@@ -23,8 +23,10 @@ import { getEndpointUrl, ENDPOINT_PATHS, DEFAULT_BASE_URL } from "../../types/co
 // =============================================================================
 
 export interface CloudTurnDetectorOptions extends TurnDetectorConfig {
-  /** VoiceKit API key (vk_xxx) - required */
-  apiKey: string;
+  /** VoiceKit API key (vk_xxx) - either apiKey or token required */
+  apiKey?: string;
+  /** JWT token for authentication (alternative to apiKey, for demo/SSR) */
+  token?: string;
   /** API base URL @default "https://kond.studio/api/voice/v1" */
   baseUrl?: string;
   /** Callback when quota exceeded (402 response) */
@@ -98,6 +100,14 @@ export class CloudTurnDetector implements TurnDetectorProvider {
   }
 
   /**
+   * Get the auth token (apiKey or JWT token)
+   */
+  private getAuthToken(): string {
+    // Prefer token if available (demo/SSR mode), otherwise use apiKey
+    return this.options.token || this.options.apiKey || "";
+  }
+
+  /**
    * Call the KOND turn detector API
    */
   private async callApi(context: TurnContext): Promise<TurnPrediction> {
@@ -113,7 +123,7 @@ export class CloudTurnDetector implements TurnDetectorProvider {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${this.options.apiKey}`,
+          "Authorization": `Bearer ${this.getAuthToken()}`,
         },
         body: JSON.stringify({
           transcript: context.transcript,

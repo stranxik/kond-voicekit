@@ -62,8 +62,21 @@ interface VoiceKitConfig {
      * VoiceKit API key (vk_xxx)
      * Get your key at: https://kond.studio/developers/voicekit/keys
      * Free tier: 100 min/month
+     *
+     * Either `apiKey` OR `token`+`tokenWsUrl` is required.
      */
-    apiKey: string;
+    apiKey?: string;
+    /**
+     * Pre-fetched token for direct connection (bypasses key exchange)
+     * Use this when you've already obtained a token server-side.
+     * Requires `tokenWsUrl` to be set.
+     */
+    token?: string;
+    /**
+     * WebSocket URL for direct token connection
+     * Required when using `token` instead of `apiKey`.
+     */
+    tokenWsUrl?: string;
     /**
      * Called when user finishes speaking with the final transcript
      * This is where you integrate your LLM
@@ -152,6 +165,13 @@ interface VoiceKitConfig {
      * @internal
      */
     baseUrl?: string;
+    /**
+     * Path to audio worklet processor script
+     * The worklet handles audio capture and resampling for STT.
+     * Users need to copy `audio-processor.worklet.js` to their public folder.
+     * @default "/audio-processor.worklet.js"
+     */
+    workletUrl?: string;
 }
 declare const DEFAULT_CONFIG: {
     voice: string;
