@@ -1,3 +1,10 @@
+var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+
 // src/react/use-voice-kit.ts
 import { useState, useEffect, useCallback, useRef } from "react";
 
@@ -835,6 +842,80 @@ function createCloudTurnDetector(options) {
   return new CloudTurnDetector(options);
 }
 
+// src/adapters/http/fetch-client.ts
+var FetchHttpClient = class {
+  constructor(config2 = {}) {
+    this.config = {
+      timeout: 3e4,
+      ...config2
+    };
+  }
+  async request(req) {
+    const url = this.buildUrl(req.url);
+    const headers = {
+      ...this.config.defaultHeaders,
+      ...req.headers
+    };
+    if (req.body && typeof req.body === "object" && !headers["Content-Type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+    let body;
+    if (req.body !== void 0) {
+      body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+    }
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), this.config.timeout);
+    const signal = req.signal ? this.combineSignals(req.signal, timeoutController.signal) : timeoutController.signal;
+    try {
+      const response = await fetch(url, {
+        method: req.method,
+        headers,
+        body,
+        signal,
+        credentials: req.credentials ?? this.config.credentials
+      });
+      clearTimeout(timeoutId);
+      return this.wrapResponse(response);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  }
+  buildUrl(url) {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      return url;
+    }
+    if (this.config.baseUrl) {
+      const base = this.config.baseUrl.endsWith("/") ? this.config.baseUrl.slice(0, -1) : this.config.baseUrl;
+      const path = url.startsWith("/") ? url : `/${url}`;
+      return `${base}${path}`;
+    }
+    return url;
+  }
+  wrapResponse(response) {
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      body: response.body,
+      json: () => response.json(),
+      text: () => response.text(),
+      arrayBuffer: () => response.arrayBuffer()
+    };
+  }
+  combineSignals(userSignal, timeoutSignal) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    userSignal.addEventListener("abort", abort);
+    timeoutSignal.addEventListener("abort", abort);
+    if (userSignal.aborted || timeoutSignal.aborted) {
+      controller.abort();
+    }
+    return controller.signal;
+  }
+};
+
 // src/core/trigger-detector.ts
 var VERB_PATTERNS_FR = [
   "cr\xE9er",
@@ -1314,7 +1395,7 @@ function createTurnManager(config2) {
   const doCommit = () => {
     if (hasCommitted) return;
     hasCommitted = true;
-    log("Committing turn:", transcript.substring(0, 50) + "...");
+    log("Committing turn:", { length: transcript.length, confidence });
     if (commitTimer) {
       clearTimeout(commitTimer);
       commitTimer = null;
@@ -1370,7 +1451,7 @@ function createTurnManager(config2) {
         const trimmedAccumulated = accumulatedFinalTranscript.trim();
         if (trimmedAccumulated && !trimmedNew.startsWith(trimmedAccumulated.substring(0, 10))) {
           accumulatedFinalTranscript = `${trimmedAccumulated} ${trimmedNew}`;
-          log("Accumulated transcript (new utterance):", accumulatedFinalTranscript.substring(0, 60) + "...");
+          log("Accumulated transcript (new utterance), length:", accumulatedFinalTranscript.length);
         } else {
           accumulatedFinalTranscript = trimmedNew;
         }
@@ -1378,7 +1459,7 @@ function createTurnManager(config2) {
         confidence = conf;
       }
       log("Transcript:", {
-        text: text.substring(0, 40) + "...",
+        length: text.length,
         isFinal,
         speechFinal,
         conf
@@ -1481,7 +1562,7 @@ function createTurnManager(config2) {
     addCompletedTurn(turn) {
       if (cfg.turnDetector) {
         cfg.turnDetector.addTurn(turn);
-        log("Added turn to detector history:", turn.role, turn.text.substring(0, 30));
+        log("Added turn to detector history:", turn.role, "length:", turn.text.length);
       }
     },
     getLastPrediction() {
@@ -1525,8 +1606,11 @@ function createTurnManager(config2) {
 
 // src/core/tts-streaming.ts
 var config = {
-  ttsStreamUrl: "/api/voice/tts/stream"
+  ttsStreamUrl: "/api/voice/v1/tts/stream"
 };
+function configureTTSStreaming(newConfig) {
+  config = { ...config, ...newConfig };
+}
 var SAMPLE_RATE = 24e3;
 var CHANNELS = 1;
 var audioContext = null;
@@ -2490,7 +2574,7 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
 }
 registerProcessor("audio-capture-processor", AudioCaptureProcessor);
 `;
-var WORKLET_VERSION = "0.1.1";
+var WORKLET_VERSION = "0.3.0";
 
 // src/core/worklet-loader.ts
 var CDN_BASE_URL = "https://kond.studio/sdk/voicekit";
@@ -2500,6 +2584,15 @@ async function loadAudioWorklet(audioContext2, options = {}) {
   const { workletUrl, debug } = options;
   const log = createLogger(debug);
   if (workletUrl) {
+    const isSecureUrl = workletUrl.startsWith("https://") || workletUrl.startsWith("blob:") || workletUrl.startsWith("/") || // Relative URLs are OK
+    workletUrl.startsWith("http://") && (workletUrl.includes("localhost") || workletUrl.includes("127.0.0.1"));
+    if (!isSecureUrl) {
+      throw new Error(
+        `[VoiceKit] Security: Worklet URL must be HTTPS, blob:, or localhost.
+Received: ${workletUrl}
+Use HTTPS in production or self-host at a secure URL.`
+      );
+    }
     log("Loading worklet from custom URL:", workletUrl);
     try {
       await audioContext2.audioWorklet.addModule(workletUrl);
@@ -2556,16 +2649,80 @@ CDN Error: ${cdnError instanceof Error ? cdnError.message : String(cdnError)}`
   }
 }
 
+// src/config/defaults.ts
+var ENDPOINTS = {
+  /** Token exchange endpoint */
+  token: "/token",
+  /** Turn detection API */
+  turnDetect: "/turn-detect",
+  /** TTS streaming endpoint */
+  ttsStream: "/tts/stream"
+};
+var DEFAULTS = {
+  /** Default voice */
+  voice: "marie-fr",
+  /** Default locale */
+  locale: "fr",
+  /** Default worklet URL */
+  workletUrl: "/audio-processor.worklet.js",
+  /** Turn detection defaults */
+  turnDetection: {
+    type: "auto",
+    confidenceThreshold: 0.7,
+    silenceTimeoutMs: 1200,
+    detectBackchannels: true
+  },
+  /** TTS defaults */
+  tts: {
+    speed: 1
+  },
+  /** Internal timing */
+  timing: {
+    cooldownMs: 150,
+    gracePeriodMs: 2e3,
+    maxSilenceMs: 2500
+  },
+  /** Debug mode */
+  debug: false
+};
+function buildEndpointUrl(baseUrl, endpoint) {
+  const base = baseUrl.replace(/\/$/, "");
+  return `${base}${ENDPOINTS[endpoint]}`;
+}
+function validateSecureUrl(baseUrl, debug) {
+  const isProduction = typeof process !== "undefined" && process.env?.NODE_ENV === "production";
+  const isLocalhost = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1");
+  const isHttps = baseUrl.startsWith("https://");
+  if (!isHttps && !isLocalhost) {
+    if (isProduction) {
+      throw new Error(
+        `[VoiceKit] Security: HTTPS is required in production. Got: ${baseUrl.substring(0, 50)}`
+      );
+    } else if (debug) {
+      console.warn(
+        `[VoiceKit] Security warning: Using HTTP in non-production. Consider using HTTPS for ${baseUrl.substring(0, 50)}`
+      );
+    }
+  }
+}
+
 // src/voicekit.ts
 var VoiceKit = class {
-  constructor(config2) {
+  /**
+   * Create a VoiceKit instance
+   *
+   * @param config - Configuration options
+   * @param deps - Optional dependency injection for testing/customization
+   */
+  constructor(config2, deps) {
     this.state = "idle";
-    // Adapters
+    this.ttsSource = null;
     this.stt = null;
     this.vad = null;
     this.turnDetector = null;
     // Core
     this.turnManager = null;
+    this.ttsPlayer = null;
     this.mediaStream = null;
     this.isInitialized = false;
     // Audio capture for routing to STT
@@ -2585,6 +2742,9 @@ var VoiceKit = class {
         "VoiceKit requires either 'apiKey' or both 'token' and 'tokenWsUrl' for authentication"
       );
     }
+    if (config2.baseUrl) {
+      validateSecureUrl(config2.baseUrl, config2.debug);
+    }
     this.config = {
       ...config2,
       locale: config2.locale || DEFAULT_CONFIG.locale,
@@ -2594,6 +2754,15 @@ var VoiceKit = class {
       debug: config2.debug ?? DEFAULT_CONFIG.debug
     };
     this.locale = this.config.locale || "fr";
+    this.deps = deps ?? {};
+    this.httpClient = this.deps.httpClient ?? new FetchHttpClient({
+      baseUrl: this.config.baseUrl || DEFAULTS.voice
+    });
+    if (this.deps.ttsSource) {
+      this.ttsSource = this.deps.ttsSource;
+    }
+    const ttsStreamUrl = this.config.baseUrl ? buildEndpointUrl(this.config.baseUrl, "ttsStream") : "/api/voice/v1/tts/stream";
+    configureTTSStreaming({ ttsStreamUrl });
   }
   /**
    * Initialize adapters and request microphone permission
@@ -2678,6 +2847,8 @@ var VoiceKit = class {
       apiKey: this.config.apiKey,
       token: this.config.token,
       // For demo/SSR mode
+      baseUrl: this.config.baseUrl,
+      // Pass through for dev/staging
       onQuotaExceeded: this.config.onQuotaExceeded
     };
     const hasCloudAuth = this.config.apiKey || this.config.token;
@@ -2977,6 +3148,9 @@ function useVoiceKit(options) {
   const hasAuth = options.apiKey || options.token && options.tokenWsUrl;
   useEffect(() => {
     if (!hasAuth) {
+      console.warn(
+        "[VoiceKit] Missing authentication. Provide either 'apiKey' or both 'token' and 'tokenWsUrl'. Get your free API key at https://kond.studio/developers/voicekit/keys"
+      );
       return;
     }
     const config2 = {
@@ -3887,6 +4061,7 @@ async function createDetector(type, config2) {
   const cloudOptions = {
     ...config2,
     apiKey: config2.apiKey || "",
+    baseUrl: config2.baseUrl,
     onQuotaExceeded: config2.onQuotaExceeded
   };
   if (type === "auto") {
@@ -4611,32 +4786,435 @@ function useVoiceConversation(options = {}) {
   };
 }
 
-// src/react/VoiceButton.tsx
-import { Fragment, jsx } from "react/jsx-runtime";
-var DEFAULT_LABELS = {
-  idle: "\u{1F3A4} Start Voice",
-  connecting: "Connecting...",
-  listening: "\u{1F3A4} Listening...",
-  vad_cooldown: "\u{1F3A4} Processing...",
-  triggered: "\u{1F4AD} Thinking...",
-  streaming: "\u{1F4AD} Responding...",
-  processing: "\u{1F4AD} Processing...",
-  speaking: "\u{1F50A} Speaking...",
-  cooldown: "\u{1F50A} Finishing..."
+// src/react/components/VoiceIcons.tsx
+import { jsx, jsxs } from "react/jsx-runtime";
+var motion = null;
+try {
+  const fm = __require("framer-motion");
+  motion = fm.motion;
+} catch {
+}
+var KEYFRAMES_INJECTED = { current: false };
+function injectKeyframes() {
+  if (KEYFRAMES_INJECTED.current || typeof document === "undefined") return;
+  KEYFRAMES_INJECTED.current = true;
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes vk-pulse {
+      0%, 100% { opacity: 0.6; }
+      50% { opacity: 1; }
+    }
+    @keyframes vk-pulse-fast {
+      0%, 100% { opacity: 0.8; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+    @keyframes vk-dots {
+      0%, 100% { opacity: 0.3; }
+      50% { opacity: 1; }
+    }
+    @keyframes vk-ripple {
+      0% { transform: scale(1); opacity: 0.4; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+    @keyframes vk-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes vk-wave {
+      0%, 100% { height: 8px; }
+      50% { height: 16px; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+function MicIcon({ size = "1rem", color = "currentColor", className = "" }) {
+  const sizeStyle = typeof size === "number" ? `${size}px` : size;
+  return /* @__PURE__ */ jsxs(
+    "svg",
+    {
+      className,
+      style: { width: sizeStyle, height: sizeStyle },
+      viewBox: "0 0 24 24",
+      fill: color,
+      children: [
+        /* @__PURE__ */ jsx("path", { d: "M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" }),
+        /* @__PURE__ */ jsx("path", { d: "M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" })
+      ]
+    }
+  );
+}
+function WaveformIcon({ size = "1rem", color = "currentColor", className = "" }) {
+  const sizeStyle = typeof size === "number" ? `${size}px` : size;
+  return /* @__PURE__ */ jsx(
+    "svg",
+    {
+      className,
+      style: { width: sizeStyle, height: sizeStyle },
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: color,
+      strokeWidth: "2",
+      children: /* @__PURE__ */ jsx("path", { d: "M12 3v18M8 8v8M16 8v8M4 11v2M20 11v2" })
+    }
+  );
+}
+function IdleIcon({ size = "1rem", color = "currentColor", className = "" }) {
+  return /* @__PURE__ */ jsx(WaveformIcon, { size, color, className });
+}
+function ListeningIcon({ size = 8, color = "#00ff88", className = "" }) {
+  injectKeyframes();
+  const sizeStyle = typeof size === "number" ? `${size}px` : size;
+  if (motion) {
+    const MotionDiv = motion.div;
+    return /* @__PURE__ */ jsx(
+      MotionDiv,
+      {
+        className,
+        style: { width: sizeStyle, height: sizeStyle, backgroundColor: color },
+        animate: { opacity: [0.6, 1, 0.6] },
+        transition: { duration: 2, repeat: Infinity, ease: "easeInOut" }
+      }
+    );
+  }
+  return /* @__PURE__ */ jsx(
+    "div",
+    {
+      className,
+      style: {
+        width: sizeStyle,
+        height: sizeStyle,
+        backgroundColor: color,
+        animation: "vk-pulse 2s ease-in-out infinite"
+      }
+    }
+  );
+}
+function RecordingIcon({ size = 8, color = "#e5e5e5", className = "" }) {
+  injectKeyframes();
+  const sizeStyle = typeof size === "number" ? `${size}px` : size;
+  if (motion) {
+    const MotionDiv = motion.div;
+    return /* @__PURE__ */ jsx(
+      MotionDiv,
+      {
+        className,
+        style: { width: sizeStyle, height: sizeStyle, backgroundColor: color },
+        animate: { scale: [1, 1.2, 1], opacity: [0.8, 1, 0.8] },
+        transition: { duration: 0.4, repeat: Infinity, ease: "easeInOut" }
+      }
+    );
+  }
+  return /* @__PURE__ */ jsx(
+    "div",
+    {
+      className,
+      style: {
+        width: sizeStyle,
+        height: sizeStyle,
+        backgroundColor: color,
+        animation: "vk-pulse-fast 0.4s ease-in-out infinite"
+      }
+    }
+  );
+}
+function ProcessingIcon({ size = 6, color = "#737373", className = "" }) {
+  injectKeyframes();
+  const sizeStyle = typeof size === "number" ? `${size}px` : size;
+  if (motion) {
+    const MotionDiv = motion.div;
+    return /* @__PURE__ */ jsx("div", { className, style: { display: "flex", alignItems: "center", gap: "2px" }, children: [0, 1, 2].map((i) => /* @__PURE__ */ jsx(
+      MotionDiv,
+      {
+        style: { width: sizeStyle, height: sizeStyle, backgroundColor: color },
+        animate: { opacity: [0.3, 1, 0.3] },
+        transition: { duration: 0.6, repeat: Infinity, delay: i * 0.15 }
+      },
+      i
+    )) });
+  }
+  return /* @__PURE__ */ jsx("div", { className, style: { display: "flex", alignItems: "center", gap: "2px" }, children: [0, 1, 2].map((i) => /* @__PURE__ */ jsx(
+    "div",
+    {
+      style: {
+        width: sizeStyle,
+        height: sizeStyle,
+        backgroundColor: color,
+        animation: `vk-dots 0.6s ease-in-out infinite`,
+        animationDelay: `${i * 0.15}s`
+      }
+    },
+    i
+  )) });
+}
+function SpeakingIcon({ size = 8, color = "#00d4ff", className = "" }) {
+  injectKeyframes();
+  const containerSize = typeof size === "number" ? size * 2 : size;
+  const dotSize = typeof size === "number" ? `${size}px` : size;
+  const containerStyle = typeof containerSize === "number" ? `${containerSize}px` : containerSize;
+  if (motion) {
+    const MotionDiv = motion.div;
+    return /* @__PURE__ */ jsxs(
+      "div",
+      {
+        className,
+        style: {
+          position: "relative",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: containerStyle,
+          height: containerStyle
+        },
+        children: [
+          /* @__PURE__ */ jsx(
+            MotionDiv,
+            {
+              style: {
+                position: "absolute",
+                inset: 0,
+                border: `1px solid ${color}`
+              },
+              animate: { scale: [1, 1.5], opacity: [0.4, 0] },
+              transition: { duration: 1, repeat: Infinity, ease: "easeOut" }
+            }
+          ),
+          /* @__PURE__ */ jsx("div", { style: { width: dotSize, height: dotSize, backgroundColor: color } })
+        ]
+      }
+    );
+  }
+  return /* @__PURE__ */ jsxs(
+    "div",
+    {
+      className,
+      style: {
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: containerStyle,
+        height: containerStyle
+      },
+      children: [
+        /* @__PURE__ */ jsx(
+          "div",
+          {
+            style: {
+              position: "absolute",
+              inset: 0,
+              border: `1px solid ${color}`,
+              animation: "vk-ripple 1s ease-out infinite"
+            }
+          }
+        ),
+        /* @__PURE__ */ jsx("div", { style: { width: dotSize, height: dotSize, backgroundColor: color } })
+      ]
+    }
+  );
+}
+function SpinnerIcon({ size = "1.25rem", color = "currentColor", className = "" }) {
+  injectKeyframes();
+  const sizeStyle = typeof size === "number" ? `${size}px` : size;
+  return /* @__PURE__ */ jsxs(
+    "svg",
+    {
+      className,
+      style: { width: sizeStyle, height: sizeStyle, animation: "vk-spin 1s linear infinite" },
+      fill: "none",
+      viewBox: "0 0 24 24",
+      children: [
+        /* @__PURE__ */ jsx(
+          "circle",
+          {
+            style: { opacity: 0.25 },
+            cx: "12",
+            cy: "12",
+            r: "10",
+            stroke: color,
+            strokeWidth: "2"
+          }
+        ),
+        /* @__PURE__ */ jsx(
+          "path",
+          {
+            style: { opacity: 0.75 },
+            fill: color,
+            d: "M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          }
+        )
+      ]
+    }
+  );
+}
+function RecordingWaveform({ size = 20, color = "currentColor", className = "" }) {
+  injectKeyframes();
+  const containerSize = typeof size === "number" ? `${size}px` : size;
+  if (motion) {
+    const MotionDiv = motion.div;
+    return /* @__PURE__ */ jsx(
+      "div",
+      {
+        className,
+        style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "2px",
+          height: containerSize,
+          width: containerSize
+        },
+        children: [0, 1, 2, 3, 4].map((i) => /* @__PURE__ */ jsx(
+          MotionDiv,
+          {
+            style: { width: "2px", backgroundColor: color, borderRadius: "9999px" },
+            animate: { height: ["8px", "16px", "8px"] },
+            transition: { duration: 0.5, repeat: Infinity, delay: i * 0.1, ease: "easeInOut" }
+          },
+          i
+        ))
+      }
+    );
+  }
+  return /* @__PURE__ */ jsx(
+    "div",
+    {
+      className,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "2px",
+        height: containerSize,
+        width: containerSize
+      },
+      children: [0, 1, 2, 3, 4].map((i) => /* @__PURE__ */ jsx(
+        "div",
+        {
+          style: {
+            width: "2px",
+            backgroundColor: color,
+            borderRadius: "9999px",
+            height: "8px",
+            animation: "vk-wave 0.5s ease-in-out infinite",
+            animationDelay: `${i * 0.1}s`
+          }
+        },
+        i
+      ))
+    }
+  );
+}
+function SendIcon({ size = "1rem", color = "currentColor", className = "" }) {
+  const sizeStyle = typeof size === "number" ? `${size}px` : size;
+  return /* @__PURE__ */ jsx(
+    "svg",
+    {
+      className,
+      style: { width: sizeStyle, height: sizeStyle },
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: color,
+      strokeWidth: "2",
+      children: /* @__PURE__ */ jsx("path", { d: "M5 12h14M12 5l7 7-7 7" })
+    }
+  );
+}
+var VoiceIcons = {
+  Mic: MicIcon,
+  Waveform: WaveformIcon,
+  Idle: IdleIcon,
+  Listening: ListeningIcon,
+  Recording: RecordingIcon,
+  Processing: ProcessingIcon,
+  Speaking: SpeakingIcon,
+  Spinner: SpinnerIcon,
+  RecordingWaveform,
+  Send: SendIcon
 };
+
+// src/react/VoiceButton.tsx
+import { Fragment, jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
+var DEFAULT_LABELS = {
+  idle: "Start Voice",
+  connecting: "Connecting...",
+  listening: "Listening...",
+  vad_cooldown: "Processing...",
+  triggered: "Thinking...",
+  streaming: "Responding...",
+  processing: "Processing...",
+  speaking: "Speaking...",
+  cooldown: "Finishing..."
+};
+var COLORS = {
+  bg: "#0a0a0a",
+  text: "#e5e5e5",
+  accent: "#00ff88",
+  border: "#262626",
+  muted: "#404040",
+  speaking: "#00d4ff",
+  recording: "#e5e5e5"
+};
+var SIZES = {
+  sm: { button: 32, icon: 14, fontSize: 10 },
+  md: { button: 40, icon: 16, fontSize: 11 },
+  lg: { button: 48, icon: 20, fontSize: 12 }
+};
+function getStateIcon(state, userSpeaking, iconSize) {
+  switch (state) {
+    case "idle":
+      return /* @__PURE__ */ jsx2(WaveformIcon, { size: iconSize, color: COLORS.muted });
+    case "connecting":
+      return /* @__PURE__ */ jsx2(SpinnerIcon, { size: iconSize, color: COLORS.muted });
+    case "listening":
+    case "vad_cooldown":
+    case "cooldown":
+      return userSpeaking ? /* @__PURE__ */ jsx2(RecordingIcon, { size: iconSize - 2, color: COLORS.recording }) : /* @__PURE__ */ jsx2(ListeningIcon, { size: iconSize - 2, color: COLORS.accent });
+    case "triggered":
+    case "streaming":
+    case "processing":
+      return /* @__PURE__ */ jsx2(ProcessingIcon, { size: iconSize - 4, color: COLORS.muted });
+    case "speaking":
+      return /* @__PURE__ */ jsx2(SpeakingIcon, { size: iconSize - 2, color: COLORS.speaking });
+    default:
+      return /* @__PURE__ */ jsx2(MicIcon, { size: iconSize, color: COLORS.muted });
+  }
+}
+function getStateBorderColor(state, userSpeaking) {
+  switch (state) {
+    case "listening":
+    case "vad_cooldown":
+    case "cooldown":
+      return userSpeaking ? COLORS.recording : COLORS.accent;
+    case "speaking":
+      return COLORS.speaking;
+    case "triggered":
+    case "streaming":
+    case "processing":
+      return COLORS.muted;
+    default:
+      return COLORS.border;
+  }
+}
 function VoiceButton({
+  variant = "styled",
   className,
   labels,
   children,
   disabled,
+  style,
+  size = "md",
+  showLabel = false,
   ...voiceOptions
 }) {
   const voice = useVoiceKit(voiceOptions);
   const mergedLabels = { ...DEFAULT_LABELS, ...labels };
+  const sizeConfig = SIZES[size];
+  const isUserSpeaking = voice.state === "vad_cooldown" || voice.state === "triggered";
   if (children) {
-    return /* @__PURE__ */ jsx(Fragment, { children: children({
+    return /* @__PURE__ */ jsx2(Fragment, { children: children({
       state: voice.state,
       isActive: voice.isActive,
+      isSpeaking: voice.isSpeaking,
       start: voice.start,
       stop: voice.stop
     }) });
@@ -4648,33 +5226,201 @@ function VoiceButton({
       voice.start();
     }
   };
-  return /* @__PURE__ */ jsx(
+  const isDisabled = disabled || voice.state === "connecting";
+  const label = mergedLabels[voice.state];
+  if (variant === "minimal") {
+    return /* @__PURE__ */ jsx2(
+      "button",
+      {
+        type: "button",
+        onClick: handleClick,
+        disabled: isDisabled,
+        className,
+        style,
+        "aria-label": voice.isActive ? "Stop voice conversation" : "Start voice conversation",
+        children: label
+      }
+    );
+  }
+  const borderColor = getStateBorderColor(voice.state, isUserSpeaking);
+  const icon = getStateIcon(voice.state, isUserSpeaking, sizeConfig.icon);
+  const buttonStyle = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: showLabel ? "8px" : 0,
+    width: showLabel ? "auto" : sizeConfig.button,
+    height: sizeConfig.button,
+    padding: showLabel ? "0 12px" : 0,
+    backgroundColor: "transparent",
+    border: `1px solid ${borderColor}`,
+    borderRadius: 0,
+    // Brutalist
+    cursor: isDisabled ? "not-allowed" : "pointer",
+    opacity: isDisabled ? 0.5 : 1,
+    transition: "border-color 0.15s ease, opacity 0.15s ease",
+    ...style
+  };
+  const labelStyle = {
+    fontSize: sizeConfig.fontSize,
+    fontFamily: "monospace",
+    textTransform: "uppercase",
+    letterSpacing: "0.1em",
+    color: COLORS.text
+  };
+  return /* @__PURE__ */ jsxs2(
     "button",
     {
       type: "button",
       onClick: handleClick,
-      disabled: disabled || voice.state === "connecting",
+      disabled: isDisabled,
       className,
+      style: buttonStyle,
       "aria-label": voice.isActive ? "Stop voice conversation" : "Start voice conversation",
-      children: mergedLabels[voice.state]
+      title: label,
+      children: [
+        icon,
+        showLabel && /* @__PURE__ */ jsx2("span", { style: labelStyle, children: label })
+      ]
     }
   );
 }
 var VoiceButton_default = VoiceButton;
+
+// src/react/components/VoiceStatusIndicator.tsx
+import { memo } from "react";
+import { jsx as jsx3, jsxs as jsxs3 } from "react/jsx-runtime";
+var DEFAULT_LABELS2 = {
+  connecting: "Connecting",
+  listening: "Listening",
+  recording: "Recording",
+  processing: "Processing",
+  speaking: "Speaking"
+};
+var DEFAULT_COLORS = {
+  connecting: "#404040",
+  listening: "#00ff88",
+  recording: "#e5e5e5",
+  processing: "#737373",
+  speaking: "#00d4ff"
+};
+var AnimatePresence = null;
+var motion2 = null;
+try {
+  const fm = __require("framer-motion");
+  AnimatePresence = fm.AnimatePresence;
+  motion2 = fm.motion;
+} catch {
+}
+function StatusDot({ displayState, color }) {
+  switch (displayState) {
+    case "connecting":
+      return /* @__PURE__ */ jsx3(SpinnerIcon, { size: 12, color });
+    case "listening":
+      return /* @__PURE__ */ jsx3(ListeningIcon, { size: 8, color });
+    case "recording":
+      return /* @__PURE__ */ jsx3(RecordingIcon, { size: 8, color });
+    case "processing":
+      return /* @__PURE__ */ jsx3(ProcessingIcon, { size: 6, color });
+    case "speaking":
+      return /* @__PURE__ */ jsx3(SpeakingIcon, { size: 8, color });
+    default:
+      return /* @__PURE__ */ jsx3(ListeningIcon, { size: 8, color });
+  }
+}
+var VoiceStatusIndicator = memo(function VoiceStatusIndicator2({
+  state,
+  userSpeaking = false,
+  isActive,
+  labels: customLabels,
+  colors: customColors,
+  className = "",
+  showLabels = true,
+  style
+}) {
+  if (!isActive) return null;
+  const labels = { ...DEFAULT_LABELS2, ...customLabels };
+  const colors = { ...DEFAULT_COLORS, ...customColors };
+  const getDisplayState = () => {
+    if (state === "connecting") return "connecting";
+    if (state === "speaking") return "speaking";
+    if (state === "triggered" || state === "streaming" || state === "processing") return "processing";
+    if (userSpeaking) return "recording";
+    return "listening";
+  };
+  const displayState = getDisplayState();
+  const label = labels[displayState];
+  const color = colors[displayState];
+  const content = /* @__PURE__ */ jsxs3(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        ...style
+      },
+      className,
+      children: [
+        /* @__PURE__ */ jsx3(StatusDot, { displayState, color }),
+        showLabels && /* @__PURE__ */ jsx3(
+          "span",
+          {
+            style: {
+              fontSize: "10px",
+              textTransform: "uppercase",
+              letterSpacing: "0.15em",
+              fontFamily: "monospace",
+              color
+            },
+            children: label
+          }
+        )
+      ]
+    }
+  );
+  if (AnimatePresence && motion2) {
+    const MotionDiv = motion2.div;
+    return /* @__PURE__ */ jsx3("div", { style: { display: "flex", justifyContent: "center", padding: "8px 0" }, children: /* @__PURE__ */ jsx3(AnimatePresence, { mode: "wait", children: /* @__PURE__ */ jsx3(
+      MotionDiv,
+      {
+        initial: { opacity: 0 },
+        animate: { opacity: 1 },
+        exit: { opacity: 0 },
+        transition: { duration: 0.15 },
+        children: content
+      },
+      displayState
+    ) }) });
+  }
+  return /* @__PURE__ */ jsx3("div", { style: { display: "flex", justifyContent: "center", padding: "8px 0" }, children: content });
+});
 export {
   DEFAULT_CONFIG,
   DEFAULT_COOLDOWN_MS,
   DEFAULT_IDLE_TIMEOUT_MS,
   DEFAULT_MAX_SESSION_MS,
   DEFAULT_SPEECH_FINAL_DELAY_MS,
+  IdleIcon,
+  ListeningIcon,
   MAX_UTTERANCE_MS,
+  MicIcon,
+  ProcessingIcon,
+  RecordingIcon,
+  RecordingWaveform,
   SILENCE_FALLBACK_MS,
   SPEECH_HYSTERESIS_MS,
   STREAMING_SAFETY_TIMEOUT_MS,
+  SendIcon,
+  SpeakingIcon,
+  SpinnerIcon,
   TRIGGERED_TIMEOUT_MS,
   VAD_COOLDOWN_MS,
   VoiceButton,
   VoiceButton_default as VoiceButtonDefault,
+  VoiceIcons,
+  VoiceStatusIndicator,
+  WaveformIcon,
   createTurnDetector,
   useAudioSetup,
   useLlmIntegration,

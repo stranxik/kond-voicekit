@@ -2,6 +2,9 @@
  * Port interfaces - Clean Architecture contracts
  */
 
+// HTTP Client Port
+export type { HttpClientPort, HttpRequest, HttpResponse } from "./http-client";
+
 // STT Port
 export type {
   StreamingSTTPort,
@@ -11,6 +14,14 @@ export type {
 
 // TTS Port
 export type { TTSProvider } from "./tts";
+
+// TTS Source Port (for fetching audio data)
+export type {
+  TTSSourcePort,
+  TTSFetchOptions,
+  TTSAudioResult,
+  PrefetchedAudio,
+} from "./tts-source";
 
 // VAD Port
 export type { VADProvider, VADCallbacks, VADConfig } from "./vad";

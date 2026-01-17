@@ -57,6 +57,22 @@ export async function loadAudioWorklet(
   // Option 1: Custom URL provided by user
   // =========================================================================
   if (workletUrl) {
+    // Security: Validate URL scheme to prevent code injection
+    const isSecureUrl =
+      workletUrl.startsWith("https://") ||
+      workletUrl.startsWith("blob:") ||
+      workletUrl.startsWith("/") || // Relative URLs are OK
+      (workletUrl.startsWith("http://") &&
+        (workletUrl.includes("localhost") || workletUrl.includes("127.0.0.1")));
+
+    if (!isSecureUrl) {
+      throw new Error(
+        `[VoiceKit] Security: Worklet URL must be HTTPS, blob:, or localhost.\n` +
+          `Received: ${workletUrl}\n` +
+          `Use HTTPS in production or self-host at a secure URL.`
+      );
+    }
+
     log("Loading worklet from custom URL:", workletUrl);
     try {
       await audioContext.audioWorklet.addModule(workletUrl);

@@ -5,7 +5,7 @@
  *
  * @example
  * ```typescript
- * import { VoiceKit } from "@kond/voicekit";
+ * import { VoiceKit } from "@kond.studio/voicekit";
  *
  * const voice = new VoiceKit({
  *   locale: "fr",
@@ -36,6 +36,8 @@ import { DEFAULT_CONFIG } from "./types/config";
 import type { StreamingSTTPort } from "./ports/stt";
 import type { VADProvider } from "./ports/vad";
 import type { TurnDetectorProvider } from "./ports/turn-detector";
+import type { HttpClientPort } from "./ports/http-client";
+import type { TTSSourcePort } from "./ports/tts-source";
 
 // Adapters
 import { createDeepgramAdapter, createDeepgramAdapterWithAuth } from "./adapters/stt";
@@ -45,30 +47,59 @@ import {
   createCloudTurnDetector,
   createOnnxTurnDetector,
 } from "./adapters/turn-detector";
+import { FetchHttpClient } from "./adapters/http";
+import { HttpTTSSource } from "./adapters/tts";
 
 // Core
 import { createTurnManager, type TurnManager } from "./core/turn-manager";
 import { createTTSQueue } from "./core/tts-queue";
 import { createSentenceAccumulator } from "./core/sentence-chunker";
 import { configureTTSStreaming, stopStreamingTTS } from "./core/tts-streaming";
+import { TTSPlayer } from "./core/tts-player";
 import { selectTtsModel } from "./core/tts-model-router";
 import { loadAudioWorklet } from "./core/worklet-loader";
+import { DEFAULTS, buildEndpointUrl, validateSecureUrl } from "./config";
+
+// ============================================
+// DEPENDENCY INJECTION TYPES
+// ============================================
+
+/**
+ * Optional dependencies that can be injected into VoiceKit.
+ * All have sensible defaults but can be overridden for testing or customization.
+ */
+export interface VoiceKitDeps {
+  /** HTTP client for API calls */
+  httpClient?: HttpClientPort;
+  /** TTS audio source (for fetching audio streams) */
+  ttsSource?: TTSSourcePort;
+  /** STT adapter (speech-to-text) */
+  sttProvider?: StreamingSTTPort;
+  /** VAD adapter (voice activity detection) */
+  vadProvider?: VADProvider;
+  /** Turn detector adapter */
+  turnDetectorProvider?: TurnDetectorProvider;
+}
 
 /**
  * VoiceKit instance
  */
 export class VoiceKit {
   private config: VoiceKitConfig;
+  private deps: VoiceKitDeps;
   private state: ConversationState = "idle";
   private locale: Locale;
 
-  // Adapters
+  // Injected adapters (from deps or created internally)
+  private httpClient: HttpClientPort;
+  private ttsSource: TTSSourcePort | null = null;
   private stt: StreamingSTTPort | null = null;
   private vad: VADProvider | null = null;
   private turnDetector: TurnDetectorProvider | null = null;
 
   // Core
   private turnManager: TurnManager | null = null;
+  private ttsPlayer: TTSPlayer | null = null;
   private mediaStream: MediaStream | null = null;
   private isInitialized = false;
 
@@ -85,7 +116,13 @@ export class VoiceKit {
   private currentTranscript = "";
   private isProcessing = false;
 
-  constructor(config: VoiceKitConfig) {
+  /**
+   * Create a VoiceKit instance
+   *
+   * @param config - Configuration options
+   * @param deps - Optional dependency injection for testing/customization
+   */
+  constructor(config: VoiceKitConfig, deps?: VoiceKitDeps) {
     // Validate authentication: either apiKey OR (token + tokenWsUrl) required
     const hasApiKey = !!config.apiKey;
     const hasToken = !!config.token && !!config.tokenWsUrl;
@@ -94,6 +131,11 @@ export class VoiceKit {
       throw new Error(
         "VoiceKit requires either 'apiKey' or both 'token' and 'tokenWsUrl' for authentication"
       );
+    }
+
+    // Security: Validate HTTPS in production
+    if (config.baseUrl) {
+      validateSecureUrl(config.baseUrl, config.debug);
     }
 
     this.config = {
@@ -105,6 +147,24 @@ export class VoiceKit {
       debug: config.debug ?? DEFAULT_CONFIG.debug,
     };
     this.locale = this.config.locale || "fr";
+    this.deps = deps ?? {};
+
+    // Initialize HTTP client (injectable or default)
+    this.httpClient = this.deps.httpClient ?? new FetchHttpClient({
+      baseUrl: this.config.baseUrl || DEFAULTS.voice,
+    });
+
+    // Initialize TTS source if provided, otherwise create lazily
+    if (this.deps.ttsSource) {
+      this.ttsSource = this.deps.ttsSource;
+    }
+
+    // Configure legacy TTS streaming for backward compatibility
+    // TODO: Remove this once all code migrates to TTSPlayer
+    const ttsStreamUrl = this.config.baseUrl
+      ? buildEndpointUrl(this.config.baseUrl, "ttsStream")
+      : "/api/voice/v1/tts/stream";
+    configureTTSStreaming({ ttsStreamUrl });
   }
 
   /**
@@ -219,6 +279,7 @@ export class VoiceKit {
       ...baseConfig,
       apiKey: this.config.apiKey,
       token: this.config.token, // For demo/SSR mode
+      baseUrl: this.config.baseUrl, // Pass through for dev/staging
       onQuotaExceeded: this.config.onQuotaExceeded,
     };
 
@@ -288,7 +349,7 @@ export class VoiceKit {
           const sendingStates: ConversationState[] = ["listening", "processing"];
           if (sendingStates.includes(this.state) && this.stt) {
             // sendAudio accepts Float32Array or ArrayBuffer
-            (this.stt as any).sendAudio(e.data.data);
+            this.stt.sendAudio(e.data.data);
           }
 
           // Feed speech probability to turn manager for better turn detection
@@ -594,7 +655,10 @@ export class VoiceKit {
 
 /**
  * Create a VoiceKit instance
+ *
+ * @param config - Configuration options
+ * @param deps - Optional dependency injection for testing/customization
  */
-export function createVoiceKit(config: VoiceKitConfig): VoiceKit {
-  return new VoiceKit(config);
+export function createVoiceKit(config: VoiceKitConfig, deps?: VoiceKitDeps): VoiceKit {
+  return new VoiceKit(config, deps);
 }

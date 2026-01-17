@@ -2,8 +2,14 @@
  * VoiceKit Adapters
  *
  * Concrete implementations of the ports interfaces.
- * Configure URLs before using adapters in your application.
  */
+
+// =============================================================================
+// HTTP Client
+// =============================================================================
+
+export { FetchHttpClient, createFetchHttpClient } from "./http";
+export type { FetchHttpClientConfig } from "./http";
 
 // =============================================================================
 // STT (Speech-to-Text)
@@ -22,6 +28,7 @@ export type { DeepgramConfig } from "./stt";
 // TTS (Text-to-Speech)
 // =============================================================================
 
+// Legacy adapter (to be removed)
 export {
   FetchTTSAdapter,
   createFetchTTSAdapter,
@@ -29,6 +36,10 @@ export {
   getFetchTTSConfig,
 } from "./tts";
 export type { FetchTTSConfig, FetchTTSAdapterOptions } from "./tts";
+
+// New clean architecture adapter
+export { HttpTTSSource, createHttpTTSSource } from "./tts";
+export type { HttpTTSSourceConfig } from "./tts";
 
 // =============================================================================
 // VAD (Voice Activity Detection)

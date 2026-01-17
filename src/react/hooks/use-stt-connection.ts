@@ -12,6 +12,7 @@ import {
   createDeepgramAdapter,
   createDeepgramAdapterWithAuth,
   type DeepgramStreamingAdapter,
+  type TokenResponse,
 } from "../../adapters/stt";
 import type { TranscriptionResult } from "../../ports/stt";
 
@@ -38,8 +39,13 @@ interface UseSTTConnectionOptions {
   apiKey?: string;
   /** API base URL override */
   baseUrl?: string;
-  /** Auth token provider for self-hosted setups (alternative to apiKey) */
-  getAuthToken?: () => Promise<string>;
+  /**
+   * Auth token provider for self-hosted setups (alternative to apiKey)
+   * Can return either:
+   * - A string token (simple case)
+   * - A TokenResponse object with { token, wsUrl, expiresIn? } for custom backends
+   */
+  getAuthToken?: () => Promise<string | TokenResponse>;
   debug?: boolean;
 }
 

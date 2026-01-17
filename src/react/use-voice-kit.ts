@@ -7,7 +7,7 @@
  *
  * @example
  * ```tsx
- * import { useVoiceKit } from "@kond/voicekit/react";
+ * import { useVoiceKit } from "@kond.studio/voicekit/react";
  *
  * function VoiceChat() {
  *   const voice = useVoiceKit({
@@ -86,6 +86,10 @@ export function useVoiceKit(options: UseVoiceKitOptions): UseVoiceKitReturn {
   useEffect(() => {
     // Don't create instance until we have auth
     if (!hasAuth) {
+      console.warn(
+        "[VoiceKit] Missing authentication. Provide either 'apiKey' or both 'token' and 'tokenWsUrl'. " +
+        "Get your free API key at https://kond.studio/developers/voicekit/keys"
+      );
       return;
     }
 

@@ -21,7 +21,17 @@ export {
 } from "./trigger-detector";
 export type { TriggerState, LinguisticSignals } from "./trigger-detector";
 
-// TTS Streaming
+// TTS Player (Clean Architecture)
+export {
+  TTSPlayer,
+  createTTSPlayer,
+  pcm16ToFloat32,
+  createAudioBuffer,
+  alignPCMChunk,
+} from "./tts-player";
+export type { TTSPlayerConfig, TTSPlayerCallbacks } from "./tts-player";
+
+// TTS Streaming (Legacy - to be removed in future version)
 export {
   configureTTSStreaming,
   getTTSStreamingConfig,

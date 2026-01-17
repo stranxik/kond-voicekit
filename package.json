@@ -1,6 +1,6 @@
 {
   "name": "@kond.studio/voicekit",
-  "version": "0.1.1",
+  "version": "0.4.0",
   "description": "Voice SDK for AI agents - STT, TTS, Turn Detection",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -30,13 +30,17 @@
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
-    "react-dom": "^18.0.0 || ^19.0.0"
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "framer-motion": "^11.0.0"
   },
   "peerDependenciesMeta": {
     "react": {
       "optional": true
     },
     "react-dom": {
+      "optional": true
+    },
+    "framer-motion": {
       "optional": true
     }
   },

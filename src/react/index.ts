@@ -1,11 +1,11 @@
 /**
- * @kond/voicekit/react
+ * @kond.studio/voicekit/react
  *
  * React bindings for VoiceKit
  *
  * @example Simple usage with useVoiceKit
  * ```tsx
- * import { useVoiceKit } from "@kond/voicekit/react";
+ * import { useVoiceKit } from "@kond.studio/voicekit/react";
  *
  * function App() {
  *   const voice = useVoiceKit({
@@ -22,7 +22,7 @@
  *
  * @example Full-featured usage with useVoiceConversation
  * ```tsx
- * import { useVoiceConversation } from "@kond/voicekit/react";
+ * import { useVoiceConversation } from "@kond.studio/voicekit/react";
  *
  * function App() {
  *   const voice = useVoiceConversation({
@@ -61,11 +61,35 @@ export type {
 export * from "./hooks";
 
 // =============================================================================
-// Component
+// Components
 // =============================================================================
 
 export { VoiceButton, default as VoiceButtonDefault } from "./VoiceButton";
 export type { VoiceButtonProps } from "./VoiceButton";
+
+// UI Components (KOND-inspired)
+export {
+  VoiceStatusIndicator,
+  VoiceIcons,
+  // Individual icon exports
+  MicIcon,
+  WaveformIcon,
+  IdleIcon,
+  ListeningIcon,
+  RecordingIcon,
+  ProcessingIcon,
+  SpeakingIcon,
+  SpinnerIcon,
+  RecordingWaveform,
+  SendIcon,
+} from "./components";
+export type {
+  VoiceStatusIndicatorProps,
+  VoiceStatusLabels,
+  VoiceStatusColors,
+  DisplayState,
+  IconProps,
+} from "./components";
 
 // =============================================================================
 // Types

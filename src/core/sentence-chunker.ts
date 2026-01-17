@@ -418,3 +418,8 @@ export function createSentenceAccumulator(
     getBuffer: () => buffer,
   };
 }
+
+/**
+ * Type for the sentence accumulator returned by createSentenceAccumulator
+ */
+export type SentenceAccumulator = ReturnType<typeof createSentenceAccumulator>;

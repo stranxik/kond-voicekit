@@ -62,8 +62,9 @@ interface DeepgramMessage {
 
 /**
  * Auth token response from gateway
+ * Used when getAuthToken returns an object with token and wsUrl
  */
-interface TokenResponse {
+export interface TokenResponse {
   token: string;
   wsUrl: string;
   expiresIn?: number;
@@ -130,6 +131,10 @@ export class DeepgramStreamingAdapter implements StreamingSTTPort {
     }
 
     // Connect to WebSocket
+    // Note: Token is passed via URL query param because browser WebSocket API
+    // doesn't support custom headers. This is the industry-standard pattern.
+    // The token is a short-lived session token (NOT the user's API key),
+    // which was securely obtained via Authorization header above.
     const wsUrl = `${baseWsUrl}?token=${encodeURIComponent(token)}&lang=${language}`;
 
     return new Promise((resolve, reject) => {

@@ -21,12 +21,12 @@ import type { Locale } from "../types/config";
  * TTS Streaming configuration
  */
 export interface TTSStreamingConfig {
-  /** TTS stream endpoint URL (default: /api/voice/tts/stream) */
+  /** TTS stream endpoint URL (default: /api/voice/v1/tts/stream) */
   ttsStreamUrl: string;
 }
 
 let config: TTSStreamingConfig = {
-  ttsStreamUrl: "/api/voice/tts/stream",
+  ttsStreamUrl: "/api/voice/v1/tts/stream",
 };
 
 /**

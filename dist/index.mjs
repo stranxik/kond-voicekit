@@ -901,6 +901,83 @@ function createMockTurnDetector(options) {
   return new MockTurnDetector(options);
 }
 
+// src/adapters/http/fetch-client.ts
+var FetchHttpClient = class {
+  constructor(config2 = {}) {
+    this.config = {
+      timeout: 3e4,
+      ...config2
+    };
+  }
+  async request(req) {
+    const url = this.buildUrl(req.url);
+    const headers = {
+      ...this.config.defaultHeaders,
+      ...req.headers
+    };
+    if (req.body && typeof req.body === "object" && !headers["Content-Type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+    let body;
+    if (req.body !== void 0) {
+      body = typeof req.body === "string" ? req.body : JSON.stringify(req.body);
+    }
+    const timeoutController = new AbortController();
+    const timeoutId = setTimeout(() => timeoutController.abort(), this.config.timeout);
+    const signal = req.signal ? this.combineSignals(req.signal, timeoutController.signal) : timeoutController.signal;
+    try {
+      const response = await fetch(url, {
+        method: req.method,
+        headers,
+        body,
+        signal,
+        credentials: req.credentials ?? this.config.credentials
+      });
+      clearTimeout(timeoutId);
+      return this.wrapResponse(response);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
+  }
+  buildUrl(url) {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      return url;
+    }
+    if (this.config.baseUrl) {
+      const base = this.config.baseUrl.endsWith("/") ? this.config.baseUrl.slice(0, -1) : this.config.baseUrl;
+      const path = url.startsWith("/") ? url : `/${url}`;
+      return `${base}${path}`;
+    }
+    return url;
+  }
+  wrapResponse(response) {
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+      body: response.body,
+      json: () => response.json(),
+      text: () => response.text(),
+      arrayBuffer: () => response.arrayBuffer()
+    };
+  }
+  combineSignals(userSignal, timeoutSignal) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    userSignal.addEventListener("abort", abort);
+    timeoutSignal.addEventListener("abort", abort);
+    if (userSignal.aborted || timeoutSignal.aborted) {
+      controller.abort();
+    }
+    return controller.signal;
+  }
+};
+function createFetchHttpClient(config2) {
+  return new FetchHttpClient(config2);
+}
+
 // src/core/trigger-detector.ts
 var VERB_PATTERNS_FR = [
   "cr\xE9er",
@@ -1405,7 +1482,7 @@ function createTurnManager(config2) {
   const doCommit = () => {
     if (hasCommitted) return;
     hasCommitted = true;
-    log("Committing turn:", transcript.substring(0, 50) + "...");
+    log("Committing turn:", { length: transcript.length, confidence });
     if (commitTimer) {
       clearTimeout(commitTimer);
       commitTimer = null;
@@ -1461,7 +1538,7 @@ function createTurnManager(config2) {
         const trimmedAccumulated = accumulatedFinalTranscript.trim();
         if (trimmedAccumulated && !trimmedNew.startsWith(trimmedAccumulated.substring(0, 10))) {
           accumulatedFinalTranscript = `${trimmedAccumulated} ${trimmedNew}`;
-          log("Accumulated transcript (new utterance):", accumulatedFinalTranscript.substring(0, 60) + "...");
+          log("Accumulated transcript (new utterance), length:", accumulatedFinalTranscript.length);
         } else {
           accumulatedFinalTranscript = trimmedNew;
         }
@@ -1469,7 +1546,7 @@ function createTurnManager(config2) {
         confidence = conf;
       }
       log("Transcript:", {
-        text: text.substring(0, 40) + "...",
+        length: text.length,
         isFinal,
         speechFinal,
         conf
@@ -1572,7 +1649,7 @@ function createTurnManager(config2) {
     addCompletedTurn(turn) {
       if (cfg.turnDetector) {
         cfg.turnDetector.addTurn(turn);
-        log("Added turn to detector history:", turn.role, turn.text.substring(0, 30));
+        log("Added turn to detector history:", turn.role, "length:", turn.text.length);
       }
     },
     getLastPrediction() {
@@ -1616,7 +1693,7 @@ function createTurnManager(config2) {
 
 // src/core/tts-streaming.ts
 var config = {
-  ttsStreamUrl: "/api/voice/tts/stream"
+  ttsStreamUrl: "/api/voice/v1/tts/stream"
 };
 function configureTTSStreaming(newConfig) {
   config = { ...config, ...newConfig };
@@ -2611,7 +2688,7 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
 }
 registerProcessor("audio-capture-processor", AudioCaptureProcessor);
 `;
-var WORKLET_VERSION = "0.1.1";
+var WORKLET_VERSION = "0.3.0";
 
 // src/core/worklet-loader.ts
 var CDN_BASE_URL = "https://kond.studio/sdk/voicekit";
@@ -2621,6 +2698,15 @@ async function loadAudioWorklet(audioContext2, options = {}) {
   const { workletUrl, debug } = options;
   const log = createLogger(debug);
   if (workletUrl) {
+    const isSecureUrl = workletUrl.startsWith("https://") || workletUrl.startsWith("blob:") || workletUrl.startsWith("/") || // Relative URLs are OK
+    workletUrl.startsWith("http://") && (workletUrl.includes("localhost") || workletUrl.includes("127.0.0.1"));
+    if (!isSecureUrl) {
+      throw new Error(
+        `[VoiceKit] Security: Worklet URL must be HTTPS, blob:, or localhost.
+Received: ${workletUrl}
+Use HTTPS in production or self-host at a secure URL.`
+      );
+    }
     log("Loading worklet from custom URL:", workletUrl);
     try {
       await audioContext2.audioWorklet.addModule(workletUrl);
@@ -2677,16 +2763,116 @@ CDN Error: ${cdnError instanceof Error ? cdnError.message : String(cdnError)}`
   }
 }
 
+// src/config/defaults.ts
+var ENVIRONMENTS = {
+  production: {
+    baseUrl: "https://kond.studio/api/voice/v1"
+  },
+  staging: {
+    baseUrl: "https://staging.kond.studio/api/voice/v1"
+  },
+  development: {
+    baseUrl: "http://localhost:3000/api/voice/v1"
+  }
+};
+var ENDPOINTS = {
+  /** Token exchange endpoint */
+  token: "/token",
+  /** Turn detection API */
+  turnDetect: "/turn-detect",
+  /** TTS streaming endpoint */
+  ttsStream: "/tts/stream"
+};
+var VOICE_PRESETS = {
+  "marie-fr": "9BWtsMINqrJLrRacOk9x",
+  // ElevenLabs voice ID
+  "thomas-fr": "ThT5KcBeYPX3keUQqHPh",
+  "emma-en": "21m00Tcm4TlvDq8ikWAM",
+  "james-en": "JBFqnCBsd6RMkjVDRZzb"
+};
+var DEFAULTS = {
+  /** Default voice */
+  voice: "marie-fr",
+  /** Default locale */
+  locale: "fr",
+  /** Default worklet URL */
+  workletUrl: "/audio-processor.worklet.js",
+  /** Turn detection defaults */
+  turnDetection: {
+    type: "auto",
+    confidenceThreshold: 0.7,
+    silenceTimeoutMs: 1200,
+    detectBackchannels: true
+  },
+  /** TTS defaults */
+  tts: {
+    speed: 1
+  },
+  /** Internal timing */
+  timing: {
+    cooldownMs: 150,
+    gracePeriodMs: 2e3,
+    maxSilenceMs: 2500
+  },
+  /** Debug mode */
+  debug: false
+};
+function getEnvironmentConfig(env) {
+  if (env && env in ENVIRONMENTS) {
+    return ENVIRONMENTS[env];
+  }
+  if (typeof process !== "undefined" && process.env?.NODE_ENV) {
+    const nodeEnv = process.env.NODE_ENV;
+    if (nodeEnv in ENVIRONMENTS) {
+      return ENVIRONMENTS[nodeEnv];
+    }
+  }
+  return ENVIRONMENTS.production;
+}
+function buildEndpointUrl(baseUrl, endpoint) {
+  const base = baseUrl.replace(/\/$/, "");
+  return `${base}${ENDPOINTS[endpoint]}`;
+}
+function resolveVoiceId(voice) {
+  if (voice in VOICE_PRESETS) {
+    return VOICE_PRESETS[voice];
+  }
+  return voice;
+}
+function validateSecureUrl(baseUrl, debug) {
+  const isProduction = typeof process !== "undefined" && process.env?.NODE_ENV === "production";
+  const isLocalhost = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1");
+  const isHttps = baseUrl.startsWith("https://");
+  if (!isHttps && !isLocalhost) {
+    if (isProduction) {
+      throw new Error(
+        `[VoiceKit] Security: HTTPS is required in production. Got: ${baseUrl.substring(0, 50)}`
+      );
+    } else if (debug) {
+      console.warn(
+        `[VoiceKit] Security warning: Using HTTP in non-production. Consider using HTTPS for ${baseUrl.substring(0, 50)}`
+      );
+    }
+  }
+}
+
 // src/voicekit.ts
 var VoiceKit = class {
-  constructor(config2) {
+  /**
+   * Create a VoiceKit instance
+   *
+   * @param config - Configuration options
+   * @param deps - Optional dependency injection for testing/customization
+   */
+  constructor(config2, deps) {
     this.state = "idle";
-    // Adapters
+    this.ttsSource = null;
     this.stt = null;
     this.vad = null;
     this.turnDetector = null;
     // Core
     this.turnManager = null;
+    this.ttsPlayer = null;
     this.mediaStream = null;
     this.isInitialized = false;
     // Audio capture for routing to STT
@@ -2706,6 +2892,9 @@ var VoiceKit = class {
         "VoiceKit requires either 'apiKey' or both 'token' and 'tokenWsUrl' for authentication"
       );
     }
+    if (config2.baseUrl) {
+      validateSecureUrl(config2.baseUrl, config2.debug);
+    }
     this.config = {
       ...config2,
       locale: config2.locale || DEFAULT_CONFIG.locale,
@@ -2715,6 +2904,15 @@ var VoiceKit = class {
       debug: config2.debug ?? DEFAULT_CONFIG.debug
     };
     this.locale = this.config.locale || "fr";
+    this.deps = deps ?? {};
+    this.httpClient = this.deps.httpClient ?? new FetchHttpClient({
+      baseUrl: this.config.baseUrl || DEFAULTS.voice
+    });
+    if (this.deps.ttsSource) {
+      this.ttsSource = this.deps.ttsSource;
+    }
+    const ttsStreamUrl = this.config.baseUrl ? buildEndpointUrl(this.config.baseUrl, "ttsStream") : "/api/voice/v1/tts/stream";
+    configureTTSStreaming({ ttsStreamUrl });
   }
   /**
    * Initialize adapters and request microphone permission
@@ -2799,6 +2997,8 @@ var VoiceKit = class {
       apiKey: this.config.apiKey,
       token: this.config.token,
       // For demo/SSR mode
+      baseUrl: this.config.baseUrl,
+      // Pass through for dev/staging
       onQuotaExceeded: this.config.onQuotaExceeded
     };
     const hasCloudAuth = this.config.apiKey || this.config.token;
@@ -3085,8 +3285,8 @@ var VoiceKit = class {
     }
   }
 };
-function createVoiceKit(config2) {
-  return new VoiceKit(config2);
+function createVoiceKit(config2, deps) {
+  return new VoiceKit(config2, deps);
 }
 
 // src/ports/vad.ts
@@ -3096,6 +3296,111 @@ var DEFAULT_VAD_CONFIG = {
   silenceDuration: 700,
   hysteresisFrames: 3
 };
+
+// src/errors/index.ts
+var VoiceKitError = class extends Error {
+  constructor(message, code, options) {
+    super(message);
+    this.name = "VoiceKitError";
+    this.code = code;
+    this.retryable = options?.retryable ?? false;
+    this.cause = options?.cause;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, this.constructor);
+    }
+  }
+};
+var NetworkError = class extends VoiceKitError {
+  constructor(message, cause) {
+    super(message, "NETWORK_ERROR", { retryable: true, cause });
+    this.name = "NetworkError";
+  }
+};
+var AuthError = class extends VoiceKitError {
+  constructor(message, cause) {
+    super(message, "AUTH_FAILED", { retryable: false, cause });
+    this.name = "AuthError";
+  }
+};
+var ConfigurationError = class extends VoiceKitError {
+  constructor(message) {
+    super(message, "CONFIGURATION_ERROR", { retryable: false });
+    this.name = "ConfigurationError";
+  }
+};
+var TranscriptionError = class extends VoiceKitError {
+  constructor(message, options) {
+    super(message, "TRANSCRIPTION_FAILED", options);
+    this.name = "TranscriptionError";
+  }
+};
+var TTSError = class extends VoiceKitError {
+  constructor(message, options) {
+    super(message, "TTS_FAILED", options);
+    this.name = "TTSError";
+  }
+};
+var VADError = class extends VoiceKitError {
+  constructor(message, options) {
+    super(message, "VAD_FAILED", options);
+    this.name = "VADError";
+  }
+};
+var TurnDetectionError = class extends VoiceKitError {
+  constructor(message, options) {
+    super(message, "TURN_DETECTION_FAILED", options);
+    this.name = "TurnDetectionError";
+  }
+};
+var RateLimitError = class extends VoiceKitError {
+  constructor(message, retryAfter) {
+    super(message, "RATE_LIMITED", { retryable: true });
+    this.name = "RateLimitError";
+    this.retryAfter = retryAfter;
+  }
+};
+var TimeoutError = class extends VoiceKitError {
+  constructor(message) {
+    super(message, "TIMEOUT", { retryable: true });
+    this.name = "TimeoutError";
+  }
+};
+var CancelledError = class extends VoiceKitError {
+  constructor(message = "Operation cancelled") {
+    super(message, "CANCELLED", { retryable: false });
+    this.name = "CancelledError";
+  }
+};
+function isVoiceKitError(error) {
+  return error instanceof VoiceKitError;
+}
+function isRetryableError(error) {
+  if (error instanceof VoiceKitError) {
+    return error.retryable;
+  }
+  return false;
+}
+function wrapError(error, defaultMessage = "Unknown error") {
+  if (error instanceof VoiceKitError) {
+    return error;
+  }
+  if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return new CancelledError();
+    }
+    if (error.message.includes("timeout") || error.message.includes("timed out")) {
+      return new TimeoutError(error.message);
+    }
+    if (error.message.includes("network") || error.message.includes("fetch")) {
+      return new NetworkError(error.message, error);
+    }
+    return new VoiceKitError(error.message, "UNKNOWN", { cause: error });
+  }
+  return new VoiceKitError(
+    typeof error === "string" ? error : defaultMessage,
+    "UNKNOWN"
+  );
+}
 
 // src/core/eou-detector.ts
 var COMPLETE_PATTERNS_FR3 = [
@@ -3193,6 +3498,191 @@ function explainEOUResult(result) {
     short_utterance: "Utterance too short to be complete"
   };
   return `EOU ${result.isComplete ? "COMPLETE" : "INCOMPLETE"} (${(result.score * 100).toFixed(0)}%): ${explanations[result.reason]}`;
+}
+
+// src/core/tts-player.ts
+var SAMPLE_RATE2 = 24e3;
+var CHANNELS2 = 1;
+var BYTES_PER_SAMPLE = 2;
+function pcm16ToFloat322(pcmData) {
+  const numSamples = Math.floor(pcmData.length / BYTES_PER_SAMPLE);
+  const float32 = new Float32Array(numSamples);
+  const dataView = new DataView(pcmData.buffer, pcmData.byteOffset, pcmData.byteLength);
+  for (let i = 0; i < numSamples; i++) {
+    const int16 = dataView.getInt16(i * BYTES_PER_SAMPLE, true);
+    float32[i] = int16 / 32768;
+  }
+  return float32;
+}
+function createAudioBuffer2(ctx, samples) {
+  const buffer = ctx.createBuffer(CHANNELS2, samples.length, SAMPLE_RATE2);
+  buffer.getChannelData(0).set(samples);
+  return buffer;
+}
+function alignPCMChunk(chunk, pendingBytes2) {
+  let pcmData;
+  if (pendingBytes2 && pendingBytes2.length > 0) {
+    pcmData = new Uint8Array(pendingBytes2.length + chunk.length);
+    pcmData.set(pendingBytes2, 0);
+    pcmData.set(chunk, pendingBytes2.length);
+  } else {
+    pcmData = chunk;
+  }
+  const remainder = pcmData.length % BYTES_PER_SAMPLE;
+  if (remainder > 0) {
+    return [pcmData.slice(0, -remainder), pcmData.slice(-remainder)];
+  }
+  return [pcmData, null];
+}
+var TTSPlayer = class {
+  constructor(source, config2 = {}) {
+    // Playback state (instance-level, not global)
+    this.audioContext = null;
+    this.isPlaying = false;
+    this.shouldStop = false;
+    this.pendingBytes = null;
+    this.nextPlayTime = 0;
+    this.activeSourceNodes = [];
+    this.source = source;
+    this.config = {
+      voice: config2.voice ?? "marie-fr",
+      debug: config2.debug ?? false
+    };
+  }
+  /**
+   * Speak text using streaming TTS
+   */
+  async speak(text, locale = "fr", callbacks, options) {
+    this.stop();
+    this.shouldStop = false;
+    this.isPlaying = true;
+    this.pendingBytes = null;
+    const ctx = this.getAudioContext();
+    try {
+      const result = await this.source.fetchAudio(text, locale, {
+        voice: options?.voice ?? this.config.voice,
+        model: options?.model
+      });
+      let hasStarted = false;
+      for await (const chunk of result.stream) {
+        if (this.shouldStop) break;
+        if (chunk && chunk.length > 0) {
+          if (!hasStarted) {
+            hasStarted = true;
+            this.log("Streaming started");
+            callbacks?.onStart?.();
+          }
+          this.processAndPlayChunk(ctx, chunk);
+        }
+      }
+      if (!this.shouldStop) {
+        await this.waitForPlaybackComplete();
+        callbacks?.onEnd?.();
+      }
+    } catch (error) {
+      this.isPlaying = false;
+      const err = error instanceof Error ? error : new TTSError("TTS playback failed");
+      callbacks?.onError?.(err);
+      throw err;
+    } finally {
+      this.isPlaying = false;
+      this.pendingBytes = null;
+    }
+  }
+  /**
+   * Stop playback
+   */
+  stop() {
+    this.shouldStop = true;
+    this.isPlaying = false;
+    this.pendingBytes = null;
+    for (const source of this.activeSourceNodes) {
+      try {
+        source.stop();
+        source.disconnect();
+      } catch {
+      }
+    }
+    this.activeSourceNodes = [];
+    this.nextPlayTime = 0;
+  }
+  /**
+   * Check if currently playing
+   */
+  get playing() {
+    return this.isPlaying;
+  }
+  /**
+   * Dispose of resources
+   */
+  dispose() {
+    this.stop();
+    if (this.audioContext && this.audioContext.state !== "closed") {
+      this.audioContext.close();
+    }
+    this.audioContext = null;
+  }
+  // ============================================
+  // PRIVATE METHODS
+  // ============================================
+  getAudioContext() {
+    if (!this.audioContext || this.audioContext.state === "closed") {
+      this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE2 });
+    }
+    if (this.audioContext.state === "suspended") {
+      this.audioContext.resume();
+    }
+    return this.audioContext;
+  }
+  processAndPlayChunk(ctx, chunk) {
+    if (this.shouldStop) return;
+    const [pcmData, remaining] = alignPCMChunk(chunk, this.pendingBytes);
+    this.pendingBytes = remaining;
+    if (pcmData.length < BYTES_PER_SAMPLE) return;
+    const float32 = pcm16ToFloat322(pcmData);
+    const buffer = createAudioBuffer2(ctx, float32);
+    this.scheduleAudioBuffer(ctx, buffer);
+  }
+  scheduleAudioBuffer(ctx, buffer) {
+    if (this.shouldStop) return;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    const currentTime = ctx.currentTime;
+    if (this.nextPlayTime < currentTime) {
+      this.nextPlayTime = currentTime;
+    }
+    source.start(this.nextPlayTime);
+    this.nextPlayTime += buffer.duration;
+    this.activeSourceNodes.push(source);
+    source.onended = () => {
+      const index = this.activeSourceNodes.indexOf(source);
+      if (index > -1) {
+        this.activeSourceNodes.splice(index, 1);
+      }
+      source.disconnect();
+    };
+  }
+  async waitForPlaybackComplete() {
+    return new Promise((resolve) => {
+      const checkComplete = () => {
+        if (this.shouldStop || this.activeSourceNodes.length === 0) {
+          resolve();
+        } else {
+          setTimeout(checkComplete, 50);
+        }
+      };
+      checkComplete();
+    });
+  }
+  log(message) {
+    if (this.config.debug) {
+      console.log(`[TTSPlayer] ${message}`);
+    }
+  }
+};
+function createTTSPlayer(source, config2) {
+  return new TTSPlayer(source, config2);
 }
 
 // src/core/utils/device-capability.ts
@@ -3362,7 +3852,7 @@ function configureFetchTTS(config2) {
 function getFetchTTSConfig() {
   return { ...globalConfig2 };
 }
-var SAMPLE_RATE2 = 24e3;
+var SAMPLE_RATE3 = 24e3;
 var FetchTTSAdapter = class {
   constructor(options = {}) {
     this.audioContext = null;
@@ -3375,7 +3865,7 @@ var FetchTTSAdapter = class {
    */
   getAudioContext() {
     if (!this.audioContext || this.audioContext.state === "closed") {
-      this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE2 });
+      this.audioContext = new AudioContext({ sampleRate: SAMPLE_RATE3 });
     }
     if (this.audioContext.state === "suspended") {
       this.audioContext.resume();
@@ -3420,7 +3910,7 @@ var FetchTTSAdapter = class {
       const ctx = this.getAudioContext();
       const pcmData = new Uint8Array(arrayBuffer);
       const float32 = this.pcm16ToFloat32(pcmData);
-      const audioBuffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE2);
+      const audioBuffer = ctx.createBuffer(1, float32.length, SAMPLE_RATE3);
       audioBuffer.getChannelData(0).set(float32);
       const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
@@ -3459,34 +3949,205 @@ var FetchTTSAdapter = class {
 function createFetchTTSAdapter(options) {
   return new FetchTTSAdapter(options);
 }
+
+// src/adapters/tts/http-tts-source.ts
+var HttpTTSSource = class {
+  constructor(httpClient, config2 = {}) {
+    this.prefetchCounter = 0;
+    this.activePrefetches = /* @__PURE__ */ new Map();
+    this.httpClient = httpClient;
+    this.config = {
+      ttsStreamUrl: config2.ttsStreamUrl ?? "",
+      baseUrl: config2.baseUrl ?? "https://kond.studio/api/voice/v1",
+      defaultVoice: config2.defaultVoice ?? "marie-fr",
+      defaultModel: config2.defaultModel ?? ""
+    };
+  }
+  async fetchAudio(text, locale, options) {
+    const url = this.getTTSUrl();
+    const voice = resolveVoiceId(options?.voice ?? this.config.defaultVoice);
+    const response = await this.httpClient.request({
+      url,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: {
+        text,
+        locale,
+        voice,
+        model: options?.model ?? (this.config.defaultModel || void 0),
+        speed: options?.speed
+      },
+      signal: options?.signal
+    });
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: "TTS request failed" }));
+      throw new TTSError(errorData.error ?? `TTS failed with status ${response.status}`);
+    }
+    if (!response.body) {
+      throw new TTSError("TTS response has no body");
+    }
+    return {
+      contentType: "audio/pcm",
+      sampleRate: 24e3,
+      channels: 1,
+      bitsPerSample: 16,
+      stream: this.streamFromReadable(response.body)
+    };
+  }
+  async prefetch(text, locale, options) {
+    const id = `prefetch-${++this.prefetchCounter}`;
+    const abortController = new AbortController();
+    const state = {
+      abortController,
+      chunks: [],
+      totalBytes: 0,
+      isComplete: false,
+      error: void 0
+    };
+    this.activePrefetches.set(id, state);
+    this.fetchInBackground(id, text, locale, {
+      ...options,
+      signal: abortController.signal
+    });
+    return {
+      id,
+      get isComplete() {
+        return state.isComplete;
+      },
+      get totalBytes() {
+        return state.totalBytes;
+      },
+      get error() {
+        return state.error;
+      },
+      getResult: () => this.getPrefetchResult(id)
+    };
+  }
+  cancelPrefetch(handle) {
+    const state = this.activePrefetches.get(handle.id);
+    if (state && !state.isComplete) {
+      state.abortController.abort();
+      this.activePrefetches.delete(handle.id);
+    }
+  }
+  getTTSUrl() {
+    if (this.config.ttsStreamUrl) {
+      return this.config.ttsStreamUrl;
+    }
+    return buildEndpointUrl(this.config.baseUrl, "ttsStream");
+  }
+  async *streamFromReadable(readable) {
+    const reader = readable.getReader();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && value.length > 0) {
+          yield value;
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  }
+  async fetchInBackground(id, text, locale, options) {
+    const state = this.activePrefetches.get(id);
+    if (!state) return;
+    try {
+      const result = await this.fetchAudio(text, locale, options);
+      for await (const chunk of result.stream) {
+        if (state.abortController.signal.aborted) break;
+        state.chunks.push(chunk);
+        state.totalBytes += chunk.length;
+      }
+      state.isComplete = true;
+    } catch (error) {
+      if (error.name !== "AbortError") {
+        state.error = error instanceof Error ? error : new Error(String(error));
+        state.isComplete = true;
+      }
+    }
+  }
+  async getPrefetchResult(id) {
+    const state = this.activePrefetches.get(id);
+    if (!state) {
+      throw new TTSError("Prefetch not found");
+    }
+    while (!state.isComplete) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (state.error) {
+      throw state.error;
+    }
+    const chunks = state.chunks;
+    return {
+      contentType: "audio/pcm",
+      sampleRate: 24e3,
+      channels: 1,
+      bitsPerSample: 16,
+      stream: (async function* () {
+        for (const chunk of chunks) {
+          yield chunk;
+        }
+      })()
+    };
+  }
+};
+function createHttpTTSSource(httpClient, config2) {
+  return new HttpTTSSource(httpClient, config2);
+}
 export {
+  AuthError,
+  CancelledError,
   CloudTurnDetector,
+  ConfigurationError,
+  DEFAULTS,
   DEFAULT_CONFIG,
   DEFAULT_TURN_DETECTOR_CONFIG,
   DEFAULT_VAD_CONFIG,
   DeepgramStreamingAdapter,
+  ENDPOINTS,
+  ENVIRONMENTS,
+  FetchHttpClient,
   FetchTTSAdapter,
   HeuristicTurnDetector,
+  HttpTTSSource,
   MockTurnDetector,
+  NetworkError,
   OnnxTurnDetector,
+  RateLimitError,
   SileroVADAdapter,
+  TTSError,
+  TTSPlayer,
+  TimeoutError,
+  TranscriptionError,
+  TurnDetectionError,
+  VADError,
+  VOICE_PRESETS,
   VoiceKit,
+  VoiceKitError,
+  alignPCMChunk,
   analyzeLinguisticSignals,
   analyzeTrigger,
+  buildEndpointUrl,
   cancelPrefetch,
   extractSentences as chunkSentences,
   configureDeepgram,
   configureFetchTTS,
   configureTTSStreaming,
+  createAudioBuffer2 as createAudioBuffer,
   createCloudTurnDetector,
   createDeepgramAdapter,
   createDeepgramAdapterWithAuth,
+  createFetchHttpClient,
   createFetchTTSAdapter,
   createHeuristicTurnDetector,
+  createHttpTTSSource,
   createMockTurnDetector,
   createOnnxTurnDetector,
   createSentenceAccumulator,
   createSileroVAD,
+  createTTSPlayer,
   createTTSQueue,
   createTurnManager,
   createVoiceKit,
@@ -3496,6 +4157,7 @@ export {
   extractSentences,
   getDeepgramConfig,
   getDeviceCapabilitySummary,
+  getEnvironmentConfig,
   getFetchTTSConfig,
   getIOSVersion,
   getTTSStreamingConfig,
@@ -3507,6 +4169,7 @@ export {
   isLikelyComplete,
   isLikelyIncomplete,
   isPreloadedReady,
+  isRetryableError,
   isSafari,
   isSemanticComplete,
   isShortAcknowledgment,
@@ -3516,8 +4179,11 @@ export {
   isUtteranceComplete,
   isVADSupported,
   isVoiceConversationSupported,
+  isVoiceKitError,
+  pcm16ToFloat322 as pcm16ToFloat32,
   playPreloadedAudio,
   prefetchAudio,
+  resolveVoiceId,
   sanitizeForTTS,
   selectTtsModel,
   selectTtsModelWithReason,
@@ -3526,6 +4192,7 @@ export {
   speakTextStreaming,
   speakTextStreamingWithCallback,
   stopStreamingTTS,
-  testAudioContextBeep
+  testAudioContextBeep,
+  wrapError
 };
 //# sourceMappingURL=index.mjs.map

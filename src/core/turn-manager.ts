@@ -381,7 +381,8 @@ export function createTurnManager(
     if (hasCommitted) return;
     hasCommitted = true;
 
-    log("Committing turn:", transcript.substring(0, 50) + "...");
+    // Security: Don't log transcript content - only metadata
+    log("Committing turn:", { length: transcript.length, confidence });
 
     // Clear timers
     if (commitTimer) {
@@ -473,7 +474,8 @@ export function createTurnManager(
         if (trimmedAccumulated && !trimmedNew.startsWith(trimmedAccumulated.substring(0, 10))) {
           // New utterance detected (doesn't continue from previous) - accumulate
           accumulatedFinalTranscript = `${trimmedAccumulated} ${trimmedNew}`;
-          log("Accumulated transcript (new utterance):", accumulatedFinalTranscript.substring(0, 60) + "...");
+          // Security: Don't log transcript content
+          log("Accumulated transcript (new utterance), length:", accumulatedFinalTranscript.length);
         } else {
           // Same utterance or first one - just update
           accumulatedFinalTranscript = trimmedNew;
@@ -483,8 +485,9 @@ export function createTurnManager(
         confidence = conf;
       }
 
+      // Security: Don't log transcript content - only metadata
       log("Transcript:", {
-        text: text.substring(0, 40) + "...",
+        length: text.length,
         isFinal,
         speechFinal,
         conf,
@@ -632,7 +635,8 @@ export function createTurnManager(
     addCompletedTurn(turn: ConversationTurn): void {
       if (cfg.turnDetector) {
         cfg.turnDetector.addTurn(turn);
-        log("Added turn to detector history:", turn.role, turn.text.substring(0, 30));
+        // Security: Don't log turn content - only metadata
+        log("Added turn to detector history:", turn.role, "length:", turn.text.length);
       }
     },
 

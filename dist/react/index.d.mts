@@ -512,6 +512,7 @@ interface DeepgramConfig {
 }
 /**
  * Auth token response from gateway
+ * Used when getAuthToken returns an object with token and wsUrl
  */
 interface TokenResponse {
     token: string;
@@ -572,8 +573,13 @@ interface UseSTTConnectionOptions {
     apiKey?: string;
     /** API base URL override */
     baseUrl?: string;
-    /** Auth token provider for self-hosted setups (alternative to apiKey) */
-    getAuthToken?: () => Promise<string>;
+    /**
+     * Auth token provider for self-hosted setups (alternative to apiKey)
+     * Can return either:
+     * - A string token (simple case)
+     * - A TokenResponse object with { token, wsUrl, expiresIn? } for custom backends
+     */
+    getAuthToken?: () => Promise<string | TokenResponse>;
     debug?: boolean;
 }
 interface UseSTTConnectionReturn {
@@ -893,6 +899,8 @@ interface UseTurnDetectorOptions extends TurnDetectorConfig {
     enabled?: boolean;
     /** VoiceKit API key for cloud provider */
     apiKey?: string;
+    /** API base URL override (for dev/staging) */
+    baseUrl?: string;
     /** Callback when quota exceeded */
     onQuotaExceeded?: (upgradeUrl: string) => void;
 }
@@ -946,23 +954,150 @@ declare function useTurnDetector(options?: UseTurnDetectorOptions): UseTurnDetec
 declare function createTurnDetector(options?: UseTurnDetectorOptions): Promise<TurnDetectorProvider>;
 
 interface VoiceButtonProps extends UseVoiceKitOptions {
+    /** Button variant: "styled" (KOND design) or "minimal" (text only, BYO styles) */
+    variant?: "styled" | "minimal";
     /** Custom className for styling */
     className?: string;
-    /** Custom text for each state */
+    /** Custom text labels for each state (used in minimal variant or as aria-label) */
     labels?: Partial<Record<ConversationState$1, string>>;
     /** Render custom content instead of default button */
     children?: (props: {
         state: ConversationState$1;
         isActive: boolean;
+        isSpeaking: boolean;
         start: () => Promise<void>;
         stop: () => void;
     }) => React$1.ReactNode;
     /** Button disabled state */
     disabled?: boolean;
+    /** Custom inline styles */
+    style?: React$1.CSSProperties;
+    /** Size of the button (styled variant only) */
+    size?: "sm" | "md" | "lg";
+    /** Show label text alongside icon (styled variant only) */
+    showLabel?: boolean;
 }
 /**
  * VoiceButton component for voice conversations
  */
-declare function VoiceButton({ className, labels, children, disabled, ...voiceOptions }: VoiceButtonProps): react_jsx_runtime.JSX.Element;
+declare function VoiceButton({ variant, className, labels, children, disabled, style, size, showLabel, ...voiceOptions }: VoiceButtonProps): react_jsx_runtime.JSX.Element;
 
-export { type AudioSetupResult, type AutoStopReason, type ConversationState$1 as ConversationState, DEFAULT_CONFIG, DEFAULT_COOLDOWN_MS, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_MAX_SESSION_MS, DEFAULT_SPEECH_FINAL_DELAY_MS, type DeepgramCallbacks, type InterruptionContext, type Locale, MAX_UTTERANCE_MS, SILENCE_FALLBACK_MS, SPEECH_HYSTERESIS_MS, STREAMING_SAFETY_TIMEOUT_MS, type STTCallbacks, TRIGGERED_TIMEOUT_MS, type TraceEvent, type TranscriptionResult$1 as TranscriptionResult, type TurnDetectorType, type UseAudioSetupReturn, type UseLLMIntegrationOptions, type UseLLMIntegrationReturn, type UseLlmIntegrationReturn, type UseSTTConnectionReturn, type UseSileroVADReturn, type UseTurnCoordinationOptions$1 as UseTurnCoordinationOptions, type UseTurnCoordinationReturn$1 as UseTurnCoordinationReturn, type UseTurnDetectorOptions, type UseTurnDetectorReturn, type UseVoiceConversationOptions, type UseVoiceConversationReturn, type UseVoiceKitOptions, type UseVoiceKitReturn, type UseVoiceTimeoutsOptions$1 as UseVoiceTimeoutsOptions, type UseVoiceTimeoutsReturn$1 as UseVoiceTimeoutsReturn, VAD_COOLDOWN_MS, VoiceButton, VoiceButton as VoiceButtonDefault, type VoiceButtonProps, type VoiceKitConfig, type VoiceKitError, createTurnDetector, useAudioSetup, useLlmIntegration, useSTTConnection, useSileroVAD, useTurnCoordination, useTurnDetector, useVoiceConversation, useVoiceKit, useVoiceKit as useVoiceKitDefault, useVoiceTimeouts };
+/**
+ * VoiceStatusIndicator - Minimal animated status indicator for voice conversations
+ *
+ * Adapted from KOND's understated aesthetic with:
+ * - Configurable labels via props
+ * - Configurable colors via props or CSS variables
+ * - Optional framer-motion animations (falls back to CSS)
+ *
+ * @example
+ * ```tsx
+ * import { VoiceStatusIndicator } from "@kond.studio/voicekit/react";
+ *
+ * <VoiceStatusIndicator
+ *   state={voice.state}
+ *   userSpeaking={voice.userSpeaking}
+ *   isActive={voice.isActive}
+ * />
+ * ```
+ */
+
+type DisplayState = "connecting" | "listening" | "recording" | "processing" | "speaking";
+interface VoiceStatusLabels {
+    connecting?: string;
+    listening?: string;
+    recording?: string;
+    processing?: string;
+    speaking?: string;
+}
+interface VoiceStatusColors {
+    connecting?: string;
+    listening?: string;
+    recording?: string;
+    processing?: string;
+    speaking?: string;
+}
+interface VoiceStatusIndicatorProps {
+    /** Current voice conversation state */
+    state: ConversationState$1;
+    /** Whether the user is currently speaking (VAD detected) */
+    userSpeaking?: boolean;
+    /** Whether voice conversation is active */
+    isActive: boolean;
+    /** Current transcript (optional, for display) */
+    transcript?: string;
+    /** Custom labels for each state */
+    labels?: VoiceStatusLabels;
+    /** Custom colors for each state */
+    colors?: VoiceStatusColors;
+    /** Additional className */
+    className?: string;
+    /** Whether to show labels (default: true on desktop) */
+    showLabels?: boolean;
+    /** Custom styles */
+    style?: React$1.CSSProperties;
+}
+declare const VoiceStatusIndicator: React$1.NamedExoticComponent<VoiceStatusIndicatorProps>;
+
+interface IconProps {
+    /** Icon size class or pixel value */
+    size?: string | number;
+    /** Icon color (CSS color value) */
+    color?: string;
+    /** Additional className */
+    className?: string;
+}
+/**
+ * Microphone icon (static)
+ */
+declare function MicIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Waveform icon (static) - for idle/voice toggle
+ */
+declare function WaveformIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Idle voice icon - waveform style
+ */
+declare function IdleIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Listening indicator - steady glow dot
+ */
+declare function ListeningIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Recording indicator - quick pulse white dot
+ */
+declare function RecordingIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Processing indicator - thinking dots
+ */
+declare function ProcessingIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Speaking icon - soft ripple effect
+ */
+declare function SpeakingIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Spinner icon - for connecting/transcribing states
+ */
+declare function SpinnerIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Recording waveform - animated bars
+ */
+declare function RecordingWaveform({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+/**
+ * Send arrow icon
+ */
+declare function SendIcon({ size, color, className }: IconProps): react_jsx_runtime.JSX.Element;
+declare const VoiceIcons: {
+    Mic: typeof MicIcon;
+    Waveform: typeof WaveformIcon;
+    Idle: typeof IdleIcon;
+    Listening: typeof ListeningIcon;
+    Recording: typeof RecordingIcon;
+    Processing: typeof ProcessingIcon;
+    Speaking: typeof SpeakingIcon;
+    Spinner: typeof SpinnerIcon;
+    RecordingWaveform: typeof RecordingWaveform;
+    Send: typeof SendIcon;
+};
+
+export { type AudioSetupResult, type AutoStopReason, type ConversationState$1 as ConversationState, DEFAULT_CONFIG, DEFAULT_COOLDOWN_MS, DEFAULT_IDLE_TIMEOUT_MS, DEFAULT_MAX_SESSION_MS, DEFAULT_SPEECH_FINAL_DELAY_MS, type DeepgramCallbacks, type DisplayState, type IconProps, IdleIcon, type InterruptionContext, ListeningIcon, type Locale, MAX_UTTERANCE_MS, MicIcon, ProcessingIcon, RecordingIcon, RecordingWaveform, SILENCE_FALLBACK_MS, SPEECH_HYSTERESIS_MS, STREAMING_SAFETY_TIMEOUT_MS, type STTCallbacks, SendIcon, SpeakingIcon, SpinnerIcon, TRIGGERED_TIMEOUT_MS, type TraceEvent, type TranscriptionResult$1 as TranscriptionResult, type TurnDetectorType, type UseAudioSetupReturn, type UseLLMIntegrationOptions, type UseLLMIntegrationReturn, type UseLlmIntegrationReturn, type UseSTTConnectionReturn, type UseSileroVADReturn, type UseTurnCoordinationOptions$1 as UseTurnCoordinationOptions, type UseTurnCoordinationReturn$1 as UseTurnCoordinationReturn, type UseTurnDetectorOptions, type UseTurnDetectorReturn, type UseVoiceConversationOptions, type UseVoiceConversationReturn, type UseVoiceKitOptions, type UseVoiceKitReturn, type UseVoiceTimeoutsOptions$1 as UseVoiceTimeoutsOptions, type UseVoiceTimeoutsReturn$1 as UseVoiceTimeoutsReturn, VAD_COOLDOWN_MS, VoiceButton, VoiceButton as VoiceButtonDefault, type VoiceButtonProps, VoiceIcons, type VoiceKitConfig, type VoiceKitError, type VoiceStatusColors, VoiceStatusIndicator, type VoiceStatusIndicatorProps, type VoiceStatusLabels, WaveformIcon, createTurnDetector, useAudioSetup, useLlmIntegration, useSTTConnection, useSileroVAD, useTurnCoordination, useTurnDetector, useVoiceConversation, useVoiceKit, useVoiceKit as useVoiceKitDefault, useVoiceTimeouts };

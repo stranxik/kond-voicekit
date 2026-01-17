@@ -1,11 +1,11 @@
 /**
- * @kond/voicekit
+ * @kond.studio/voicekit
  *
  * Voice conversation SDK for real-time speech-to-text, turn detection, and text-to-speech.
  *
  * @example Basic usage with VoiceKit class (coming soon)
  * ```typescript
- * import { VoiceKit } from "@kond/voicekit";
+ * import { VoiceKit } from "@kond.studio/voicekit";
  *
  * const voice = new VoiceKit({
  *   locale: "fr",
@@ -20,9 +20,9 @@
  *
  * @example Low-level usage with adapters
  * ```typescript
- * import { configureDeepgram, createDeepgramAdapter } from "@kond/voicekit/adapters";
- * import { createSileroVAD } from "@kond/voicekit/adapters";
- * import { createTurnManager } from "@kond/voicekit/core";
+ * import { configureDeepgram, createDeepgramAdapter } from "@kond.studio/voicekit/adapters";
+ * import { createSileroVAD } from "@kond.studio/voicekit/adapters";
+ * import { createTurnManager } from "@kond.studio/voicekit/core";
  *
  * // Configure backend URLs
  * configureDeepgram({ wsUrl: "wss://your-stt-proxy.com" });
@@ -39,6 +39,7 @@
 // =============================================================================
 
 export { VoiceKit, createVoiceKit } from "./voicekit";
+export type { VoiceKitDeps } from "./voicekit";
 
 // =============================================================================
 // Types
@@ -48,7 +49,7 @@ export type {
   Locale,
   ConversationState,
   TraceEvent,
-  VoiceKitError,
+  VoiceKitError as VoiceKitErrorInfo, // Renamed to avoid collision with VoiceKitError class
   VoiceKitConfig,
 } from "./types/config";
 export { DEFAULT_CONFIG } from "./types/config";
@@ -56,6 +57,9 @@ export { DEFAULT_CONFIG } from "./types/config";
 // =============================================================================
 // Ports (Interfaces)
 // =============================================================================
+
+// HTTP Client Port
+export type { HttpClientPort, HttpRequest, HttpResponse } from "./ports/http-client";
 
 // STT Port
 export type {
@@ -66,6 +70,14 @@ export type {
 
 // TTS Port
 export type { TTSProvider } from "./ports/tts";
+
+// TTS Source Port
+export type {
+  TTSSourcePort,
+  TTSFetchOptions,
+  TTSAudioResult,
+  PrefetchedAudio as TTSPrefetchedAudio,
+} from "./ports/tts-source";
 
 // VAD Port
 export type { VADProvider, VADCallbacks, VADConfig } from "./ports/vad";
@@ -80,6 +92,43 @@ export type {
   TurnDetectorConfig,
 } from "./ports/turn-detector";
 export { DEFAULT_TURN_DETECTOR_CONFIG } from "./ports/turn-detector";
+
+// =============================================================================
+// Errors
+// =============================================================================
+
+export {
+  VoiceKitError,
+  NetworkError,
+  AuthError,
+  ConfigurationError,
+  TranscriptionError,
+  TTSError,
+  VADError,
+  TurnDetectionError,
+  RateLimitError,
+  TimeoutError,
+  CancelledError,
+  isVoiceKitError,
+  isRetryableError,
+  wrapError,
+} from "./errors";
+export type { VoiceKitErrorCode } from "./errors";
+
+// =============================================================================
+// Config
+// =============================================================================
+
+export {
+  ENVIRONMENTS,
+  ENDPOINTS,
+  VOICE_PRESETS,
+  DEFAULTS,
+  getEnvironmentConfig,
+  buildEndpointUrl,
+  resolveVoiceId,
+} from "./config";
+export type { EnvironmentConfig } from "./config";
 
 // =============================================================================
 // Core (Signal Processing & Conversation Logic)
@@ -104,7 +153,22 @@ export {
 } from "./core/trigger-detector";
 export type { TriggerState, LinguisticSignals } from "./core/trigger-detector";
 
-// TTS Streaming
+// TTS Player (Clean Architecture)
+export {
+  TTSPlayer,
+  createTTSPlayer,
+  pcm16ToFloat32,
+  createAudioBuffer,
+  alignPCMChunk,
+} from "./core/tts-player";
+export type { TTSPlayerConfig, TTSPlayerCallbacks } from "./core/tts-player";
+
+/**
+ * @deprecated TTS Streaming is legacy. Use TTSPlayer for new code.
+ *
+ * These exports are maintained for backwards compatibility but will be removed in v1.0.
+ * Migrate to: `import { TTSPlayer, createTTSPlayer } from "@kond.studio/voicekit"`
+ */
 export {
   configureTTSStreaming,
   getTTSStreamingConfig,
@@ -118,10 +182,12 @@ export {
   isPreloadedReady,
   testAudioContextBeep,
 } from "./core/tts-streaming";
+/** @deprecated Use TTSPlayerConfig instead */
 export type { TTSStreamingConfig, PreloadedAudio } from "./core/tts-streaming";
 
 // TTS Queue
 export { createTTSQueue, extractSentences, createSentenceAccumulator } from "./core/tts-queue";
+export type { SentenceAccumulator } from "./core/tts-queue";
 
 // TTS Model Router
 export { selectTtsModel, selectTtsModelWithReason, isShortAcknowledgment } from "./core/tts-model-router";
@@ -151,6 +217,10 @@ export {
 // Adapters (Concrete Implementations)
 // =============================================================================
 
+// HTTP Client Adapters
+export { FetchHttpClient, createFetchHttpClient } from "./adapters/http";
+export type { FetchHttpClientConfig } from "./adapters/http";
+
 // STT Adapters
 export {
   DeepgramStreamingAdapter,
@@ -159,15 +229,25 @@ export {
   configureDeepgram,
   getDeepgramConfig,
 } from "./adapters/stt";
-export type { DeepgramConfig } from "./adapters/stt";
+export type { DeepgramConfig, TokenResponse } from "./adapters/stt";
 
-// TTS Adapters
+// TTS Source Adapters (Clean Architecture)
+export { HttpTTSSource, createHttpTTSSource } from "./adapters/tts";
+export type { HttpTTSSourceConfig } from "./adapters/tts";
+
+/**
+ * @deprecated FetchTTSAdapter is legacy. Use HttpTTSSource for new code.
+ *
+ * These exports are maintained for backwards compatibility but will be removed in v1.0.
+ * Migrate to: `import { HttpTTSSource, createHttpTTSSource } from "@kond.studio/voicekit"`
+ */
 export {
   FetchTTSAdapter,
   createFetchTTSAdapter,
   configureFetchTTS,
   getFetchTTSConfig,
 } from "./adapters/tts";
+/** @deprecated Use HttpTTSSourceConfig instead */
 export type { FetchTTSConfig, FetchTTSAdapterOptions } from "./adapters/tts";
 
 // VAD Adapters

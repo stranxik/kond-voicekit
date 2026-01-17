@@ -1,6 +1,6 @@
 # VoiceKit Vite Example
 
-A voice AI agent demo using [@kond/voicekit](https://github.com/stranxik/kond/tree/main/packages/voicekit) with Vite + React.
+A voice AI agent demo using [@kond.studio/voicekit](https://www.npmjs.com/package/@kond.studio/voicekit) with Vite + React.
 
 ## Features
 
@@ -8,26 +8,37 @@ A voice AI agent demo using [@kond/voicekit](https://github.com/stranxik/kond/tr
 - Multiple LLM providers (Claude, OpenAI, Ollama)
 - Real-time transcript display
 - Lightweight build (~80kb)
-- Settings persistence (localStorage)
 
 ## Quick Start
 
 ```bash
-# From the monorepo root
-pnpm install
+# Install dependencies (bun recommended)
+bun install
 
-# Run the example
-cd packages/voicekit/examples/vite
-pnpm dev
+# Start development server
+bun dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
 
+### Alternative package managers
+
+```bash
+# npm
+npm install && npm run dev
+
+# yarn
+yarn && yarn dev
+
+# pnpm
+pnpm install && pnpm dev
+```
+
 ## Build for Production
 
 ```bash
-pnpm build
-pnpm preview
+bun run build
+bun run preview
 ```
 
 ## Configuration
@@ -38,6 +49,14 @@ See the [Next.js example README](../nextjs/README.md) for configuration details.
 - **Claude** - Anthropic API key
 - **OpenAI** - OpenAI API key
 - **Ollama** - Local LLM (no key needed)
+
+## Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in your keys:
+
+```bash
+cp .env.example .env.local
+```
 
 ## License
 

@@ -9,4 +9,4 @@ export {
   configureDeepgram,
   getDeepgramConfig,
 } from "./deepgram";
-export type { DeepgramConfig } from "./deepgram";
+export type { DeepgramConfig, TokenResponse } from "./deepgram";

@@ -14,13 +14,25 @@
    ╚═══╝   ╚═════╝ ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝╚═╝   ╚═╝
 ```
 
-# @kond/voicekit
+# @kond.studio/voicekit
 
 > **Voice I/O for AI agents — You bring your own LLM**
 >
 > VoiceKit handles STT, TTS, and turn detection. Your AI handles intelligence.
 >
 > **Zero LLM lock-in. Zero markup on your AI calls.**
+
+---
+
+## Installation
+
+```bash
+npm install @kond.studio/voicekit
+# or
+pnpm add @kond.studio/voicekit
+# or
+yarn add @kond.studio/voicekit
+```
 
 ---
 
@@ -69,7 +81,7 @@ Free tier includes **100 minutes/month**.
 ### With Claude (Anthropic)
 
 ```typescript
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 import Anthropic from '@anthropic-ai/sdk';
 
 const anthropic = new Anthropic();
@@ -93,7 +105,7 @@ await voice.start();
 ### With GPT (OpenAI)
 
 ```typescript
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 import OpenAI from 'openai';
 
 const openai = new OpenAI();
@@ -116,7 +128,7 @@ await voice.start();
 ### With Gemini (Google)
 
 ```typescript
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -137,7 +149,7 @@ await voice.start();
 ### With Mistral
 
 ```typescript
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 import { Mistral } from '@mistralai/mistralai';
 
 const mistral = new Mistral();
@@ -160,7 +172,7 @@ await voice.start();
 ### With Ollama (Local LLM)
 
 ```typescript
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 import { Ollama } from 'ollama';
 
 const ollama = new Ollama();
@@ -195,10 +207,44 @@ VoiceKit uses a simple two-key model:
 
 ---
 
+## Security Considerations
+
+### API Key Storage
+
+**DO:**
+- Store `VOICEKIT_API_KEY` in environment variables (`.env.local`)
+- Store LLM API keys server-side when possible
+- Use short-lived tokens for client-side if needed
+
+**DON'T:**
+- Never hardcode API keys in source code
+- Never store API keys in localStorage or cookies
+- Never log API keys or transcripts in production
+
+### HTTPS
+
+VoiceKit enforces HTTPS in production. HTTP is only allowed for localhost development.
+
+```typescript
+// This will throw in production:
+new VoiceKit({ baseUrl: 'http://insecure.example.com' }); // Error!
+
+// OK in development:
+new VoiceKit({ baseUrl: 'http://localhost:3000' }); // Works
+```
+
+### Data Privacy
+
+- Transcripts are processed in real-time and not stored by VoiceKit
+- Audio is streamed to STT provider (Deepgram) and not retained
+- LLM calls go directly to your provider — VoiceKit never sees them
+
+---
+
 ## React
 
 ```tsx
-import { useVoiceKit } from '@kond/voicekit/react';
+import { useVoiceKit } from '@kond.studio/voicekit/react';
 
 function VoiceChat() {
   const voice = useVoiceKit({
@@ -343,7 +389,7 @@ Issues and PRs welcome on [GitHub](https://github.com/stranxik/kond-voicekit).
 │                                                                          │
 │                           [ ^_^ ]                                        │
 │                                                                          │
-│                @kond/voicekit — built with care                          │
+│             @kond.studio/voicekit — built with care                          │
 │                                                                          │
 │          Voice I/O for AI agents. You bring your own LLM.               │
 │                                                                          │

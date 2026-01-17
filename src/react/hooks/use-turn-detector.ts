@@ -40,6 +40,8 @@ export interface UseTurnDetectorOptions extends TurnDetectorConfig {
   enabled?: boolean;
   /** VoiceKit API key for cloud provider */
   apiKey?: string;
+  /** API base URL override (for dev/staging) */
+  baseUrl?: string;
   /** Callback when quota exceeded */
   onQuotaExceeded?: (upgradeUrl: string) => void;
 }
@@ -76,6 +78,7 @@ async function createDetector(
   const cloudOptions = {
     ...config,
     apiKey: config.apiKey || "",
+    baseUrl: config.baseUrl,
     onQuotaExceeded: config.onQuotaExceeded,
   };
 

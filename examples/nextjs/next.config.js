@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@kond/voicekit"],
+  transpilePackages: ["@kond.studio/voicekit"],
 };
 
 module.exports = nextConfig;

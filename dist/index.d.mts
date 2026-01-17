@@ -34,7 +34,7 @@ interface TraceEvent {
 /**
  * VoiceKit error
  */
-interface VoiceKitError {
+interface VoiceKitError$1 {
     code: string;
     message: string;
     details?: unknown;
@@ -100,7 +100,7 @@ interface VoiceKitConfig {
     /**
      * Called on errors
      */
-    onError?: (error: VoiceKitError) => void;
+    onError?: (error: VoiceKitError$1) => void;
     /**
      * Called when user interrupts (barge-in)
      */
@@ -190,120 +190,6 @@ declare const DEFAULT_CONFIG: {
 };
 
 /**
- * VoiceKit - Main class for voice conversations
- *
- * Provides a simple high-level API for integrating voice capabilities.
- *
- * @example
- * ```typescript
- * import { VoiceKit } from "@kond/voicekit";
- *
- * const voice = new VoiceKit({
- *   locale: "fr",
- *   onTranscript: async (text) => {
- *     const response = await myLLM.generate(text);
- *     voice.speak(response);
- *   },
- *   onStateChange: (state) => console.log("State:", state),
- * });
- *
- * // Start listening
- * await voice.start();
- *
- * // User speaks... onTranscript is called
- *
- * // Stop when done
- * voice.stop();
- * ```
- */
-
-/**
- * VoiceKit instance
- */
-declare class VoiceKit {
-    private config;
-    private state;
-    private locale;
-    private stt;
-    private vad;
-    private turnDetector;
-    private turnManager;
-    private mediaStream;
-    private isInitialized;
-    private audioContext;
-    private audioWorklet;
-    private audioSource;
-    private ttsQueue;
-    private sentenceAccumulator;
-    private currentTranscript;
-    private isProcessing;
-    constructor(config: VoiceKitConfig);
-    /**
-     * Initialize adapters and request microphone permission
-     */
-    init(): Promise<void>;
-    /**
-     * Create the appropriate turn detector based on type
-     */
-    private createTurnDetector;
-    /**
-     * Start listening for voice input
-     */
-    start(): Promise<void>;
-    /**
-     * Stop listening
-     */
-    stop(): void;
-    /**
-     * Speak text using TTS
-     * Handles sentence chunking and progressive playback
-     */
-    speak(text: string): void;
-    /**
-     * Finish speaking - flush any remaining text
-     */
-    finishSpeaking(): void;
-    /**
-     * Interrupt current TTS playback (barge-in)
-     */
-    interrupt(): void;
-    private handleInterimTranscript;
-    private handleFinalTranscript;
-    private handleTurnComplete;
-    private handleUtteranceEnd;
-    private processTranscript;
-    private handleSpeechStart;
-    private handleSpeechEnd;
-    private updateVADProbability;
-    private setState;
-    private handleError;
-    /**
-     * Get current conversation state
-     */
-    getState(): ConversationState;
-    /**
-     * Get current locale
-     */
-    getLocale(): Locale;
-    /**
-     * Check if voice is active (listening or processing)
-     */
-    isActive(): boolean;
-    /**
-     * Check if currently speaking
-     */
-    isSpeaking(): boolean;
-    /**
-     * Destroy instance and cleanup resources
-     */
-    destroy(): void;
-}
-/**
- * Create a VoiceKit instance
- */
-declare function createVoiceKit(config: VoiceKitConfig): VoiceKit;
-
-/**
  * STT Port - Clean Architecture interface for Speech-to-Text
  *
  * Defines the contract for streaming STT implementations.
@@ -359,32 +245,6 @@ interface StreamingSTTPort {
      * Check if currently streaming
      */
     isStreaming(): boolean;
-}
-
-/**
- * TTS Provider Port - Abstract contract for text-to-speech
- *
- * This port defines the interface for any TTS implementation,
- * allowing the core voice module to remain decoupled from
- * specific TTS services (ElevenLabs, OpenAI, etc.)
- */
-
-interface TTSProvider {
-    /**
-     * Synthesize text to speech and play the audio
-     * @param text - The text to synthesize
-     * @param locale - Language locale ("fr" or "en")
-     * @returns Promise that resolves when playback starts (not when it ends)
-     */
-    synthesize(text: string, locale: Locale): Promise<void>;
-    /**
-     * Stop any currently playing audio
-     */
-    stop(): void;
-    /**
-     * Check if audio is currently playing
-     */
-    isPlaying(): boolean;
 }
 
 /**
@@ -549,6 +409,521 @@ interface TurnDetectorProvider {
  * Default configuration
  */
 declare const DEFAULT_TURN_DETECTOR_CONFIG: Required<Omit<TurnDetectorConfig, "forceProvider">>;
+
+/**
+ * HTTP Client Port - Abstraction for HTTP requests
+ *
+ * This port allows the SDK to be:
+ * - Testable: Mock HTTP for unit tests
+ * - Framework-agnostic: Swap fetch for axios, ky, etc.
+ * - Server-side compatible: Use node-fetch or undici
+ */
+/**
+ * HTTP request configuration
+ */
+interface HttpRequest {
+    /** Full URL to request */
+    url: string;
+    /** HTTP method */
+    method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+    /** Request headers */
+    headers?: Record<string, string>;
+    /** Request body (will be JSON.stringify'd for objects) */
+    body?: unknown;
+    /** AbortSignal for cancellation */
+    signal?: AbortSignal;
+    /** Request credentials mode */
+    credentials?: RequestCredentials;
+}
+/**
+ * HTTP response wrapper
+ */
+interface HttpResponse {
+    /** Whether the request was successful (status 200-299) */
+    ok: boolean;
+    /** HTTP status code */
+    status: number;
+    /** Status text */
+    statusText: string;
+    /** Response headers */
+    headers: Headers;
+    /** Response body as ReadableStream (for streaming) */
+    body: ReadableStream<Uint8Array> | null;
+    /** Parse response as JSON */
+    json<T>(): Promise<T>;
+    /** Parse response as text */
+    text(): Promise<string>;
+    /** Parse response as ArrayBuffer */
+    arrayBuffer(): Promise<ArrayBuffer>;
+}
+/**
+ * HTTP Client Port Interface
+ *
+ * Implement this interface to provide custom HTTP handling:
+ * - Add authentication headers
+ * - Add logging/metrics
+ * - Use different HTTP libraries
+ * - Mock for testing
+ */
+interface HttpClientPort {
+    /**
+     * Make an HTTP request
+     * @param request - Request configuration
+     * @returns Promise resolving to the response
+     * @throws NetworkError on connection failure
+     */
+    request(request: HttpRequest): Promise<HttpResponse>;
+}
+
+/**
+ * TTS Source Port - Abstract contract for fetching TTS audio data
+ *
+ * This port separates the I/O (fetching audio) from playback logic.
+ * The core TTS playback module uses this port to get audio streams.
+ *
+ * This enables:
+ * - Testing with mock audio data
+ * - Swapping TTS providers (ElevenLabs, OpenAI, etc.)
+ * - Server-side rendering compatibility
+ */
+
+/**
+ * Options for fetching TTS audio
+ */
+interface TTSFetchOptions {
+    /** Voice ID (provider-specific or preset name) */
+    voice?: string;
+    /** TTS model override */
+    model?: string;
+    /** Speech speed (0.5-1.5) */
+    speed?: number;
+    /** AbortSignal for cancellation */
+    signal?: AbortSignal;
+}
+/**
+ * Result of a TTS fetch - either streaming or complete
+ */
+interface TTSAudioResult {
+    /** Audio content type (e.g., "audio/pcm", "audio/mp3") */
+    contentType: string;
+    /** Sample rate in Hz (e.g., 24000) */
+    sampleRate: number;
+    /** Number of channels (1 = mono, 2 = stereo) */
+    channels: number;
+    /** Bits per sample (e.g., 16) */
+    bitsPerSample: number;
+    /** Stream of audio chunks */
+    stream: AsyncIterable<Uint8Array>;
+}
+/**
+ * Port for fetching TTS audio data
+ *
+ * Implementation examples:
+ * - HttpTTSSource: Fetches from a TTS API endpoint
+ * - MockTTSSource: Returns pre-recorded audio for testing
+ * - WebRTCTTSSource: Real-time TTS over WebRTC
+ */
+interface TTSSourcePort {
+    /**
+     * Fetch TTS audio for the given text
+     *
+     * @param text - Text to synthesize
+     * @param locale - Language locale
+     * @param options - Additional options
+     * @returns Audio result with stream of PCM chunks
+     * @throws TTSError on failure
+     */
+    fetchAudio(text: string, locale: Locale, options?: TTSFetchOptions): Promise<TTSAudioResult>;
+    /**
+     * Prefetch audio for later playback (optional optimization)
+     * Returns a handle that can be passed to a player
+     *
+     * @param text - Text to synthesize
+     * @param locale - Language locale
+     * @param options - Additional options
+     * @returns Promise of prefetched audio handle
+     */
+    prefetch?(text: string, locale: Locale, options?: TTSFetchOptions): Promise<PrefetchedAudio>;
+    /**
+     * Cancel a prefetch operation
+     */
+    cancelPrefetch?(handle: PrefetchedAudio): void;
+}
+/**
+ * Handle for prefetched audio
+ */
+interface PrefetchedAudio {
+    /** Unique ID for this prefetch */
+    id: string;
+    /** Whether prefetch is complete */
+    isComplete: boolean;
+    /** Total bytes fetched so far */
+    totalBytes: number;
+    /** Any error that occurred */
+    error?: Error;
+    /** Get the audio result (may block until prefetch complete) */
+    getResult(): Promise<TTSAudioResult>;
+}
+
+/**
+ * VoiceKit - Main class for voice conversations
+ *
+ * Provides a simple high-level API for integrating voice capabilities.
+ *
+ * @example
+ * ```typescript
+ * import { VoiceKit } from "@kond.studio/voicekit";
+ *
+ * const voice = new VoiceKit({
+ *   locale: "fr",
+ *   onTranscript: async (text) => {
+ *     const response = await myLLM.generate(text);
+ *     voice.speak(response);
+ *   },
+ *   onStateChange: (state) => console.log("State:", state),
+ * });
+ *
+ * // Start listening
+ * await voice.start();
+ *
+ * // User speaks... onTranscript is called
+ *
+ * // Stop when done
+ * voice.stop();
+ * ```
+ */
+
+/**
+ * Optional dependencies that can be injected into VoiceKit.
+ * All have sensible defaults but can be overridden for testing or customization.
+ */
+interface VoiceKitDeps {
+    /** HTTP client for API calls */
+    httpClient?: HttpClientPort;
+    /** TTS audio source (for fetching audio streams) */
+    ttsSource?: TTSSourcePort;
+    /** STT adapter (speech-to-text) */
+    sttProvider?: StreamingSTTPort;
+    /** VAD adapter (voice activity detection) */
+    vadProvider?: VADProvider;
+    /** Turn detector adapter */
+    turnDetectorProvider?: TurnDetectorProvider;
+}
+/**
+ * VoiceKit instance
+ */
+declare class VoiceKit {
+    private config;
+    private deps;
+    private state;
+    private locale;
+    private httpClient;
+    private ttsSource;
+    private stt;
+    private vad;
+    private turnDetector;
+    private turnManager;
+    private ttsPlayer;
+    private mediaStream;
+    private isInitialized;
+    private audioContext;
+    private audioWorklet;
+    private audioSource;
+    private ttsQueue;
+    private sentenceAccumulator;
+    private currentTranscript;
+    private isProcessing;
+    /**
+     * Create a VoiceKit instance
+     *
+     * @param config - Configuration options
+     * @param deps - Optional dependency injection for testing/customization
+     */
+    constructor(config: VoiceKitConfig, deps?: VoiceKitDeps);
+    /**
+     * Initialize adapters and request microphone permission
+     */
+    init(): Promise<void>;
+    /**
+     * Create the appropriate turn detector based on type
+     */
+    private createTurnDetector;
+    /**
+     * Start listening for voice input
+     */
+    start(): Promise<void>;
+    /**
+     * Stop listening
+     */
+    stop(): void;
+    /**
+     * Speak text using TTS
+     * Handles sentence chunking and progressive playback
+     */
+    speak(text: string): void;
+    /**
+     * Finish speaking - flush any remaining text
+     */
+    finishSpeaking(): void;
+    /**
+     * Interrupt current TTS playback (barge-in)
+     */
+    interrupt(): void;
+    private handleInterimTranscript;
+    private handleFinalTranscript;
+    private handleTurnComplete;
+    private handleUtteranceEnd;
+    private processTranscript;
+    private handleSpeechStart;
+    private handleSpeechEnd;
+    private updateVADProbability;
+    private setState;
+    private handleError;
+    /**
+     * Get current conversation state
+     */
+    getState(): ConversationState;
+    /**
+     * Get current locale
+     */
+    getLocale(): Locale;
+    /**
+     * Check if voice is active (listening or processing)
+     */
+    isActive(): boolean;
+    /**
+     * Check if currently speaking
+     */
+    isSpeaking(): boolean;
+    /**
+     * Destroy instance and cleanup resources
+     */
+    destroy(): void;
+}
+/**
+ * Create a VoiceKit instance
+ *
+ * @param config - Configuration options
+ * @param deps - Optional dependency injection for testing/customization
+ */
+declare function createVoiceKit(config: VoiceKitConfig, deps?: VoiceKitDeps): VoiceKit;
+
+/**
+ * TTS Provider Port - Abstract contract for text-to-speech
+ *
+ * This port defines the interface for any TTS implementation,
+ * allowing the core voice module to remain decoupled from
+ * specific TTS services (ElevenLabs, OpenAI, etc.)
+ */
+
+interface TTSProvider {
+    /**
+     * Synthesize text to speech and play the audio
+     * @param text - The text to synthesize
+     * @param locale - Language locale ("fr" or "en")
+     * @returns Promise that resolves when playback starts (not when it ends)
+     */
+    synthesize(text: string, locale: Locale): Promise<void>;
+    /**
+     * Stop any currently playing audio
+     */
+    stop(): void;
+    /**
+     * Check if audio is currently playing
+     */
+    isPlaying(): boolean;
+}
+
+/**
+ * VoiceKit Error Classes
+ *
+ * Structured error handling for better debugging and error recovery.
+ * All VoiceKit errors extend VoiceKitError for easy catching.
+ */
+/**
+ * Error codes for VoiceKit errors
+ */
+type VoiceKitErrorCode = "NETWORK_ERROR" | "AUTH_FAILED" | "CONFIGURATION_ERROR" | "TRANSCRIPTION_FAILED" | "TTS_FAILED" | "VAD_FAILED" | "TURN_DETECTION_FAILED" | "RATE_LIMITED" | "TIMEOUT" | "CANCELLED" | "UNKNOWN";
+/**
+ * Base error class for all VoiceKit errors
+ */
+declare class VoiceKitError extends Error {
+    readonly code: VoiceKitErrorCode;
+    readonly retryable: boolean;
+    readonly cause?: Error;
+    constructor(message: string, code: VoiceKitErrorCode, options?: {
+        retryable?: boolean;
+        cause?: Error;
+    });
+}
+/**
+ * Network-related errors (connection failed, DNS resolution, etc.)
+ */
+declare class NetworkError extends VoiceKitError {
+    constructor(message: string, cause?: Error);
+}
+/**
+ * Authentication/Authorization errors
+ */
+declare class AuthError extends VoiceKitError {
+    constructor(message: string, cause?: Error);
+}
+/**
+ * Configuration errors (invalid config, missing required fields)
+ */
+declare class ConfigurationError extends VoiceKitError {
+    constructor(message: string);
+}
+/**
+ * Speech-to-Text transcription errors
+ */
+declare class TranscriptionError extends VoiceKitError {
+    constructor(message: string, options?: {
+        retryable?: boolean;
+        cause?: Error;
+    });
+}
+/**
+ * Text-to-Speech synthesis errors
+ */
+declare class TTSError extends VoiceKitError {
+    constructor(message: string, options?: {
+        retryable?: boolean;
+        cause?: Error;
+    });
+}
+/**
+ * Voice Activity Detection errors
+ */
+declare class VADError extends VoiceKitError {
+    constructor(message: string, options?: {
+        retryable?: boolean;
+        cause?: Error;
+    });
+}
+/**
+ * Turn detection errors
+ */
+declare class TurnDetectionError extends VoiceKitError {
+    constructor(message: string, options?: {
+        retryable?: boolean;
+        cause?: Error;
+    });
+}
+/**
+ * Rate limit exceeded
+ */
+declare class RateLimitError extends VoiceKitError {
+    readonly retryAfter?: number;
+    constructor(message: string, retryAfter?: number);
+}
+/**
+ * Request timeout
+ */
+declare class TimeoutError extends VoiceKitError {
+    constructor(message: string);
+}
+/**
+ * Operation was cancelled
+ */
+declare class CancelledError extends VoiceKitError {
+    constructor(message?: string);
+}
+/**
+ * Check if an error is a VoiceKitError
+ */
+declare function isVoiceKitError(error: unknown): error is VoiceKitError;
+/**
+ * Check if an error is retryable
+ */
+declare function isRetryableError(error: unknown): boolean;
+/**
+ * Wrap unknown errors in VoiceKitError
+ */
+declare function wrapError(error: unknown, defaultMessage?: string): VoiceKitError;
+
+/**
+ * VoiceKit Environment Configuration
+ *
+ * Centralized configuration for all environments.
+ * Users can override baseUrl in VoiceKitConfig, but endpoints are fixed.
+ */
+/**
+ * Environment-specific API configuration
+ */
+interface EnvironmentConfig {
+    /** Base URL for all API calls */
+    baseUrl: string;
+    /** WebSocket URL for STT (derived from baseUrl if not set) */
+    wsUrl?: string;
+}
+/**
+ * Built-in environment presets
+ */
+declare const ENVIRONMENTS: Record<string, EnvironmentConfig>;
+/**
+ * API endpoint paths (relative to baseUrl)
+ * These are implementation details and should not be exposed to users.
+ */
+declare const ENDPOINTS: {
+    /** Token exchange endpoint */
+    readonly token: "/token";
+    /** Turn detection API */
+    readonly turnDetect: "/turn-detect";
+    /** TTS streaming endpoint */
+    readonly ttsStream: "/tts/stream";
+};
+/**
+ * Default voice presets
+ */
+declare const VOICE_PRESETS: {
+    readonly "marie-fr": "9BWtsMINqrJLrRacOk9x";
+    readonly "thomas-fr": "ThT5KcBeYPX3keUQqHPh";
+    readonly "emma-en": "21m00Tcm4TlvDq8ikWAM";
+    readonly "james-en": "JBFqnCBsd6RMkjVDRZzb";
+};
+/**
+ * Default configuration values
+ */
+declare const DEFAULTS: {
+    /** Default voice */
+    voice: string;
+    /** Default locale */
+    locale: "fr";
+    /** Default worklet URL */
+    workletUrl: string;
+    /** Turn detection defaults */
+    turnDetection: {
+        type: "auto";
+        confidenceThreshold: number;
+        silenceTimeoutMs: number;
+        detectBackchannels: boolean;
+    };
+    /** TTS defaults */
+    tts: {
+        speed: number;
+    };
+    /** Internal timing */
+    timing: {
+        cooldownMs: number;
+        gracePeriodMs: number;
+        maxSilenceMs: number;
+    };
+    /** Debug mode */
+    debug: boolean;
+};
+/**
+ * Get environment config by name or detection
+ */
+declare function getEnvironmentConfig(env?: string): EnvironmentConfig;
+/**
+ * Build full endpoint URL from base URL and path
+ */
+declare function buildEndpointUrl(baseUrl: string, endpoint: keyof typeof ENDPOINTS): string;
+/**
+ * Resolve voice ID from preset name or direct ID
+ */
+declare function resolveVoiceId(voice: string): string;
 
 /**
  * Turn Manager - Intelligent turn-taking for voice conversations
@@ -811,6 +1186,102 @@ declare function selectTtsModelWithReason(text: string, context?: TtsContext): T
 declare function isShortAcknowledgment(text: string): boolean;
 
 /**
+ * TTS Player - Clean Architecture PCM Audio Playback
+ *
+ * Plays PCM audio from a TTSSourcePort using Web Audio API.
+ * No global state - all state is encapsulated in the class.
+ * No direct fetch - uses injected TTSSourcePort for audio data.
+ *
+ * Audio format: 24kHz, 16-bit signed little-endian, mono
+ */
+
+/**
+ * Convert PCM 16-bit signed little-endian to Float32 (-1 to 1)
+ */
+declare function pcm16ToFloat32(pcmData: Uint8Array): Float32Array;
+/**
+ * Create AudioBuffer from Float32 samples
+ */
+declare function createAudioBuffer(ctx: AudioContext, samples: Float32Array): AudioBuffer;
+/**
+ * Handle incomplete PCM samples at chunk boundaries
+ * Returns [processable data, remaining bytes]
+ */
+declare function alignPCMChunk(chunk: Uint8Array, pendingBytes: Uint8Array | null): [Uint8Array, Uint8Array | null];
+/**
+ * Configuration for TTSPlayer
+ */
+interface TTSPlayerConfig {
+    /** Default voice ID */
+    voice?: string;
+    /** Debug logging */
+    debug?: boolean;
+}
+/**
+ * Callbacks for TTSPlayer events
+ */
+interface TTSPlayerCallbacks {
+    onStart?: () => void;
+    onEnd?: () => void;
+    onError?: (error: Error) => void;
+}
+/**
+ * TTS Player - Plays audio from TTSSourcePort
+ *
+ * Clean architecture: No global state, uses dependency injection.
+ *
+ * Usage:
+ * ```typescript
+ * const httpClient = new FetchHttpClient();
+ * const ttsSource = new HttpTTSSource(httpClient, { baseUrl: "/api/voice/v1" });
+ * const player = new TTSPlayer(ttsSource, { voice: "marie-fr" });
+ *
+ * await player.speak("Bonjour!", "fr", {
+ *   onEnd: () => console.log("Done speaking")
+ * });
+ * ```
+ */
+declare class TTSPlayer {
+    private source;
+    private config;
+    private audioContext;
+    private isPlaying;
+    private shouldStop;
+    private pendingBytes;
+    private nextPlayTime;
+    private activeSourceNodes;
+    constructor(source: TTSSourcePort, config?: TTSPlayerConfig);
+    /**
+     * Speak text using streaming TTS
+     */
+    speak(text: string, locale?: Locale, callbacks?: TTSPlayerCallbacks, options?: {
+        voice?: string;
+        model?: TtsModel;
+    }): Promise<void>;
+    /**
+     * Stop playback
+     */
+    stop(): void;
+    /**
+     * Check if currently playing
+     */
+    get playing(): boolean;
+    /**
+     * Dispose of resources
+     */
+    dispose(): void;
+    private getAudioContext;
+    private processAndPlayChunk;
+    private scheduleAudioBuffer;
+    private waitForPlaybackComplete;
+    private log;
+}
+/**
+ * Create a TTSPlayer instance
+ */
+declare function createTTSPlayer(source: TTSSourcePort, config?: TTSPlayerConfig): TTSPlayer;
+
+/**
  * Streaming TTS Client - PCM Real-time Playback
  * Uses Web Audio API for true chunk-by-chunk playback
  *
@@ -826,7 +1297,7 @@ declare function isShortAcknowledgment(text: string): boolean;
  * TTS Streaming configuration
  */
 interface TTSStreamingConfig {
-    /** TTS stream endpoint URL (default: /api/voice/tts/stream) */
+    /** TTS stream endpoint URL (default: /api/voice/v1/tts/stream) */
     ttsStreamUrl: string;
 }
 /**
@@ -925,6 +1396,10 @@ declare function createSentenceAccumulator(onSentence: (sentence: string) => voi
     reset: () => void;
     getBuffer: () => string;
 };
+/**
+ * Type for the sentence accumulator returned by createSentenceAccumulator
+ */
+type SentenceAccumulator = ReturnType<typeof createSentenceAccumulator>;
 
 /**
  * TTS Queue - Progressive sentence-by-sentence TTS playback with PRE-FETCH
@@ -1059,6 +1534,42 @@ declare function ensureAudioContextResumed(ctx: AudioContext): Promise<void>;
 declare function sleep(ms: number): Promise<void>;
 
 /**
+ * Fetch HTTP Client Adapter
+ *
+ * Default implementation of HttpClientPort using the Fetch API.
+ * Works in browsers and modern Node.js (18+).
+ */
+
+/**
+ * Configuration for FetchHttpClient
+ */
+interface FetchHttpClientConfig {
+    /** Base URL to prepend to relative URLs */
+    baseUrl?: string;
+    /** Default headers to include in all requests */
+    defaultHeaders?: Record<string, string>;
+    /** Default credentials mode */
+    credentials?: RequestCredentials;
+    /** Request timeout in milliseconds (default: 30000) */
+    timeout?: number;
+}
+/**
+ * Default HTTP client using the Fetch API
+ */
+declare class FetchHttpClient implements HttpClientPort {
+    private config;
+    constructor(config?: FetchHttpClientConfig);
+    request(req: HttpRequest): Promise<HttpResponse>;
+    private buildUrl;
+    private wrapResponse;
+    private combineSignals;
+}
+/**
+ * Create a FetchHttpClient instance
+ */
+declare function createFetchHttpClient(config?: FetchHttpClientConfig): FetchHttpClient;
+
+/**
  * Deepgram Adapter - Streaming STT via WebSocket
  *
  * Connects to a WebSocket proxy (Railway voice-ws or custom) which proxies to Deepgram.
@@ -1090,6 +1601,7 @@ declare function configureDeepgram(config: Partial<DeepgramConfig>): void;
 declare function getDeepgramConfig(): DeepgramConfig;
 /**
  * Auth token response from gateway
+ * Used when getAuthToken returns an object with token and wsUrl
  */
 interface TokenResponse {
     token: string;
@@ -1195,6 +1707,51 @@ declare class FetchTTSAdapter implements TTSProvider {
  * Factory function to create a FetchTTSAdapter instance
  */
 declare function createFetchTTSAdapter(options?: FetchTTSAdapterOptions): TTSProvider;
+
+/**
+ * HTTP TTS Source Adapter
+ *
+ * Fetches TTS audio from an HTTP streaming endpoint.
+ * Uses HttpClientPort for all network I/O.
+ */
+
+/**
+ * Configuration for HttpTTSSource
+ */
+interface HttpTTSSourceConfig {
+    /** TTS stream endpoint URL (full URL or baseUrl) */
+    ttsStreamUrl?: string;
+    /** Base URL (used if ttsStreamUrl is not set) */
+    baseUrl?: string;
+    /** Default voice ID */
+    defaultVoice?: string;
+    /** Default TTS model */
+    defaultModel?: string;
+}
+/**
+ * HTTP-based TTS Source
+ *
+ * Streams PCM audio from a TTS API endpoint.
+ * Audio format: 24kHz, 16-bit signed little-endian, mono
+ */
+declare class HttpTTSSource implements TTSSourcePort {
+    private httpClient;
+    private config;
+    private prefetchCounter;
+    private activePrefetches;
+    constructor(httpClient: HttpClientPort, config?: HttpTTSSourceConfig);
+    fetchAudio(text: string, locale: Locale, options?: TTSFetchOptions): Promise<TTSAudioResult>;
+    prefetch(text: string, locale: Locale, options?: TTSFetchOptions): Promise<PrefetchedAudio>;
+    cancelPrefetch(handle: PrefetchedAudio): void;
+    private getTTSUrl;
+    private streamFromReadable;
+    private fetchInBackground;
+    private getPrefetchResult;
+}
+/**
+ * Create an HttpTTSSource instance
+ */
+declare function createHttpTTSSource(httpClient: HttpClientPort, config?: HttpTTSSourceConfig): HttpTTSSource;
 
 /**
  * Silero VAD Adapter - ML-based voice activity detection
@@ -1435,4 +1992,4 @@ declare class MockTurnDetector implements TurnDetectorProvider {
  */
 declare function createMockTurnDetector(options?: MockTurnDetectorOptions): TurnDetectorProvider;
 
-export { CloudTurnDetector, type CloudTurnDetectorOptions, type ConversationState, type ConversationTurn, DEFAULT_CONFIG, DEFAULT_TURN_DETECTOR_CONFIG, DEFAULT_VAD_CONFIG, type DeepgramConfig, DeepgramStreamingAdapter, type EOUContext, type EOUReason, type EOUResult, FetchTTSAdapter, type FetchTTSAdapterOptions, type FetchTTSConfig, HeuristicTurnDetector, type HeuristicTurnDetectorOptions, type LinguisticSignals, type Locale, MockTurnDetector, type MockTurnDetectorOptions, OnnxTurnDetector, type OnnxTurnDetectorOptions, type PreloadedAudio, SileroVADAdapter, type SileroVADConfig, type StreamingCallbacks, type StreamingSTTPort, type TTSProvider, type TTSStreamingConfig, type TraceEvent, type TranscriptionResult, type TriggerState, type TtsContext, type TtsModel, type TtsModelSelection, type TurnContext, type TurnDetectorConfig, type TurnDetectorProvider, type TurnManager, type TurnManagerConfig, type TurnPrediction, type VADCallbacks, type VADConfig, type VADProvider, VoiceKit, type VoiceKitConfig, type VoiceKitError, analyzeLinguisticSignals, analyzeTrigger, cancelPrefetch, extractSentences as chunkSentences, configureDeepgram, configureFetchTTS, configureTTSStreaming, createCloudTurnDetector, createDeepgramAdapter, createDeepgramAdapterWithAuth, createFetchTTSAdapter, createHeuristicTurnDetector, createMockTurnDetector, createOnnxTurnDetector, createSentenceAccumulator, createSileroVAD, createTTSQueue, createTurnManager, createVoiceKit, detectEndOfUtterance, ensureAudioContextResumed, explainEOUResult, extractSentences, getDeepgramConfig, getDeviceCapabilitySummary, getFetchTTSConfig, getIOSVersion, getTTSStreamingConfig, hasTerminalPunctuation, hasVisualBlocks, isBackchannel, isDeviceCapableForLocalML, isIOS, isLikelyComplete, isLikelyIncomplete, isPreloadedReady, isSafari, isSemanticComplete, isShortAcknowledgment, isStreamingTTSPlaying, isBackchannel$1 as isTriggerBackchannel, isLikelyIncomplete$1 as isTriggerIncomplete, isUtteranceComplete, isVADSupported, isVoiceConversationSupported, playPreloadedAudio, prefetchAudio, sanitizeForTTS, selectTtsModel, selectTtsModelWithReason, shouldTriggerEarly, sleep, speakTextStreaming, speakTextStreamingWithCallback, stopStreamingTTS, testAudioContextBeep };
+export { AuthError, CancelledError, CloudTurnDetector, type CloudTurnDetectorOptions, ConfigurationError, type ConversationState, type ConversationTurn, DEFAULTS, DEFAULT_CONFIG, DEFAULT_TURN_DETECTOR_CONFIG, DEFAULT_VAD_CONFIG, type DeepgramConfig, DeepgramStreamingAdapter, ENDPOINTS, ENVIRONMENTS, type EOUContext, type EOUReason, type EOUResult, type EnvironmentConfig, FetchHttpClient, type FetchHttpClientConfig, FetchTTSAdapter, type FetchTTSAdapterOptions, type FetchTTSConfig, HeuristicTurnDetector, type HeuristicTurnDetectorOptions, type HttpClientPort, type HttpRequest, type HttpResponse, HttpTTSSource, type HttpTTSSourceConfig, type LinguisticSignals, type Locale, MockTurnDetector, type MockTurnDetectorOptions, NetworkError, OnnxTurnDetector, type OnnxTurnDetectorOptions, type PreloadedAudio, RateLimitError, type SentenceAccumulator, SileroVADAdapter, type SileroVADConfig, type StreamingCallbacks, type StreamingSTTPort, type TTSAudioResult, TTSError, type TTSFetchOptions, TTSPlayer, type TTSPlayerCallbacks, type TTSPlayerConfig, type PrefetchedAudio as TTSPrefetchedAudio, type TTSProvider, type TTSSourcePort, type TTSStreamingConfig, TimeoutError, type TokenResponse, type TraceEvent, TranscriptionError, type TranscriptionResult, type TriggerState, type TtsContext, type TtsModel, type TtsModelSelection, type TurnContext, TurnDetectionError, type TurnDetectorConfig, type TurnDetectorProvider, type TurnManager, type TurnManagerConfig, type TurnPrediction, type VADCallbacks, type VADConfig, VADError, type VADProvider, VOICE_PRESETS, VoiceKit, type VoiceKitConfig, type VoiceKitDeps, VoiceKitError, type VoiceKitErrorCode, type VoiceKitError$1 as VoiceKitErrorInfo, alignPCMChunk, analyzeLinguisticSignals, analyzeTrigger, buildEndpointUrl, cancelPrefetch, extractSentences as chunkSentences, configureDeepgram, configureFetchTTS, configureTTSStreaming, createAudioBuffer, createCloudTurnDetector, createDeepgramAdapter, createDeepgramAdapterWithAuth, createFetchHttpClient, createFetchTTSAdapter, createHeuristicTurnDetector, createHttpTTSSource, createMockTurnDetector, createOnnxTurnDetector, createSentenceAccumulator, createSileroVAD, createTTSPlayer, createTTSQueue, createTurnManager, createVoiceKit, detectEndOfUtterance, ensureAudioContextResumed, explainEOUResult, extractSentences, getDeepgramConfig, getDeviceCapabilitySummary, getEnvironmentConfig, getFetchTTSConfig, getIOSVersion, getTTSStreamingConfig, hasTerminalPunctuation, hasVisualBlocks, isBackchannel, isDeviceCapableForLocalML, isIOS, isLikelyComplete, isLikelyIncomplete, isPreloadedReady, isRetryableError, isSafari, isSemanticComplete, isShortAcknowledgment, isStreamingTTSPlaying, isBackchannel$1 as isTriggerBackchannel, isLikelyIncomplete$1 as isTriggerIncomplete, isUtteranceComplete, isVADSupported, isVoiceConversationSupported, isVoiceKitError, pcm16ToFloat32, playPreloadedAudio, prefetchAudio, resolveVoiceId, sanitizeForTTS, selectTtsModel, selectTtsModelWithReason, shouldTriggerEarly, sleep, speakTextStreaming, speakTextStreamingWithCallback, stopStreamingTTS, testAudioContextBeep, wrapError };

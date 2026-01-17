@@ -31,8 +31,9 @@ import { sanitizeForTTS } from "./sanitize-for-tts";
 import type { TtsModel } from "./tts-model-router";
 import type { Locale } from "../types/config";
 
-// Re-export sentence chunker functions for backward compatibility
+// Re-export sentence chunker functions and types for backward compatibility
 export { extractSentences, createSentenceAccumulator } from "./sentence-chunker";
+export type { SentenceAccumulator } from "./sentence-chunker";
 
 /** Queue item with optional model override */
 interface QueueItem {

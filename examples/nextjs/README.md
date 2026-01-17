@@ -1,6 +1,6 @@
 # VoiceKit Next.js Example
 
-A voice AI agent demo using [@kond/voicekit](https://github.com/stranxik/kond/tree/main/packages/voicekit) with Next.js 14 (App Router).
+A voice AI agent demo using [@kond.studio/voicekit](https://www.npmjs.com/package/@kond.studio/voicekit) with Next.js 14+ (App Router).
 
 ## Features
 
@@ -8,20 +8,38 @@ A voice AI agent demo using [@kond/voicekit](https://github.com/stranxik/kond/tr
 - Multiple LLM providers (Claude, OpenAI, Ollama)
 - Real-time transcript display
 - Conversation history
-- Settings persistence (localStorage)
 
 ## Quick Start
 
 ```bash
-# From the monorepo root
-pnpm install
+# Install dependencies (bun recommended)
+bun install
 
-# Run the example
-cd packages/voicekit/examples/nextjs
-pnpm dev
+# Start development server
+bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+### Alternative package managers
+
+```bash
+# npm
+npm install && npm run dev
+
+# yarn
+yarn && yarn dev
+
+# pnpm (outside monorepo only)
+pnpm install && pnpm dev
+```
+
+## Build for Production
+
+```bash
+bun run build
+bun start
+```
 
 ## Configuration
 
@@ -48,10 +66,18 @@ No API key needed. Your speech is echoed back as text-to-speech.
 3. In the demo, select Ollama provider
 4. Ensure URL is `http://localhost:11434`
 
+## Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in your keys:
+
+```bash
+cp .env.example .env.local
+```
+
 ## How It Works
 
 ```tsx
-import { useVoiceKit } from "@kond/voicekit/react";
+import { useVoiceKit } from "@kond.studio/voicekit/react";
 
 function App() {
   const voice = useVoiceKit({

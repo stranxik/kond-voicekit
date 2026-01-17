@@ -12,7 +12,7 @@
  *   useSTTConnection,
  *   useVoiceTimeouts,
  *   useTurnCoordination,
- * } from "@kond/voicekit/react/hooks";
+ * } from "@kond.studio/voicekit/react/hooks";
  *
  * function CustomVoice() {
  *   const audio = useAudioSetup({ debug: true });

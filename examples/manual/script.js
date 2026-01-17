@@ -1,16 +1,15 @@
 /**
  * VoiceKit Vanilla JS Example
  *
- * This example demonstrates how to use @kond/voicekit without any framework.
- *
- * Note: When @kond/voicekit is published to npm, you can import it from CDN:
- * import { VoiceKit } from "https://esm.sh/@kond/voicekit";
- *
- * For development, you need to build the SDK and serve it locally.
+ * This example demonstrates how to use @kond.studio/voicekit without any framework.
+ * The SDK is loaded from esm.sh CDN for zero-config usage.
  */
 
-// Configuration
-const VOICEKIT_DEMO_KEY = "demo_key"; // Replace with real key for production
+// Import VoiceKit from CDN
+import { VoiceKit } from "https://esm.sh/@kond.studio/voicekit@0.3.0";
+
+// Configuration - Replace with your real VoiceKit API key
+const VOICEKIT_API_KEY = "vk_your_key_here"; // Get one at https://kond.studio/developers/voicekit
 let voice = null;
 let conversationHistory = [];
 
@@ -45,14 +44,14 @@ const STATE_LABELS = {
   cooldown: "Cooldown...",
 };
 
-// Load saved config
+// Load saved config (excluding sensitive apiKey for security)
 function loadConfig() {
   try {
     const saved = localStorage.getItem("voicekit-demo-config");
     if (saved) {
       const config = JSON.parse(saved);
       if (config.provider) providerSelect.value = config.provider;
-      if (config.apiKey) apiKeyInput.value = config.apiKey;
+      // Note: apiKey is NOT persisted for security reasons
       if (config.model) modelInput.value = config.model;
       if (config.ollamaUrl) ollamaUrlInput.value = config.ollamaUrl;
       if (config.ollamaModel) ollamaModelInput.value = config.ollamaModel;
@@ -63,11 +62,12 @@ function loadConfig() {
   }
 }
 
-// Save config
+// Save config (excluding sensitive apiKey for security)
 function saveConfig() {
+  // Security: Never persist API keys in localStorage
+  // They would be accessible via browser DevTools and XSS attacks
   const config = {
     provider: providerSelect.value,
-    apiKey: apiKeyInput.value,
     model: modelInput.value,
     ollamaUrl: ollamaUrlInput.value,
     ollamaModel: ollamaModelInput.value,
@@ -277,32 +277,21 @@ async function handleTranscript(text) {
 // Initialize VoiceKit
 async function initVoiceKit() {
   try {
-    // Try to import VoiceKit
-    // When published to npm, use: const { VoiceKit } = await import("https://esm.sh/@kond/voicekit");
-    // For local development, the SDK needs to be bundled and served
-
-    // For now, show a message that the SDK needs to be set up
-    console.log("VoiceKit initialization would happen here");
-    console.log("To use this example:");
-    console.log("1. Build the SDK: cd ../../ && pnpm build");
-    console.log("2. Serve the dist folder or use a bundler");
-
-    // Mock VoiceKit for demonstration
-    voice = {
-      state: "idle",
-      start: () => {
-        console.log("VoiceKit.start() - SDK not loaded");
-        showError("VoiceKit SDK not loaded. See console for instructions.");
+    // Create VoiceKit instance with real SDK
+    voice = new VoiceKit({
+      apiKey: VOICEKIT_API_KEY,
+      locale: "en",
+      onTranscript: handleTranscript,
+      onStateChange: (state) => {
+        updateStatus(state);
       },
-      stop: () => {
-        console.log("VoiceKit.stop()");
-        updateStatus("idle");
+      onError: (err) => {
+        showError(err.message);
+        console.error("VoiceKit error:", err);
       },
-      speak: (text) => {
-        console.log("VoiceKit.speak():", text);
-      },
-    };
+    });
 
+    console.log("[VoiceKit] Initialized successfully");
     updateStatus("idle");
 
   } catch (err) {
