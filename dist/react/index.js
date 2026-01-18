@@ -2629,7 +2629,7 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
 }
 registerProcessor("audio-capture-processor", AudioCaptureProcessor);
 `;
-var WORKLET_VERSION = "0.4.0";
+var WORKLET_VERSION = "0.4.1";
 
 // src/core/worklet-loader.ts
 var CDN_BASE_URL = "https://kond.studio/sdk/voicekit";
@@ -2714,8 +2714,8 @@ var ENDPOINTS = {
   ttsStream: "/tts/stream"
 };
 var DEFAULTS = {
-  /** Default voice */
-  voice: "marie-fr",
+  /** Default base URL for API calls (production) */
+  baseUrl: "https://kond.studio/api/voice/v1",
   /** Default locale */
   locale: "fr",
   /** Default worklet URL */
@@ -2811,12 +2811,15 @@ var VoiceKit = class {
     this.locale = this.config.locale || "fr";
     this.deps = deps ?? {};
     this.httpClient = this.deps.httpClient ?? new FetchHttpClient({
-      baseUrl: this.config.baseUrl || DEFAULTS.voice
+      baseUrl: this.config.baseUrl || DEFAULTS.baseUrl
     });
     if (this.deps.ttsSource) {
       this.ttsSource = this.deps.ttsSource;
     }
-    const ttsStreamUrl = this.config.baseUrl ? buildEndpointUrl(this.config.baseUrl, "ttsStream") : "/api/voice/v1/tts/stream";
+    const ttsStreamUrl = buildEndpointUrl(
+      this.config.baseUrl || DEFAULTS.baseUrl,
+      "ttsStream"
+    );
     configureTTSStreaming({ ttsStreamUrl });
   }
   /**

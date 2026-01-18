@@ -122,4 +122,4 @@ registerProcessor("audio-capture-processor", AudioCaptureProcessor);
 /**
  * SDK version - used for CDN fallback URL versioning
  */
-export const WORKLET_VERSION = "0.3.0";
+export const WORKLET_VERSION = "0.4.1";

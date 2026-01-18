@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useCallback, KeyboardEvent } from "react";
 import type { ConversationState } from "@kond.studio/voicekit";
 import { VoiceStatusIndicator } from "@kond.studio/voicekit/react";
 
@@ -7,6 +8,7 @@ interface ChatInputProps {
   voiceState: ConversationState;
   onStart: () => void;
   onStop: () => void;
+  onSendText: (text: string) => void;
   disabled?: boolean;
 }
 
@@ -14,9 +16,29 @@ export function ChatInput({
   voiceState,
   onStart,
   onStop,
+  onSendText,
   disabled = false,
 }: ChatInputProps) {
+  const [inputText, setInputText] = useState("");
   const isActive = voiceState !== "idle";
+
+  const handleSend = useCallback(() => {
+    const trimmed = inputText.trim();
+    if (trimmed && !disabled) {
+      onSendText(trimmed);
+      setInputText("");
+    }
+  }, [inputText, disabled, onSendText]);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
 
   return (
     <div className="input-area">
@@ -27,11 +49,28 @@ export function ChatInput({
           <span className="input-prompt">&gt;</span>
           <textarea
             className="input-textarea"
-            placeholder="Click the mic to speak..."
-            readOnly
+            placeholder={isActive ? "Listening..." : "Type a message or click the mic..."}
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={isActive}
             rows={1}
           />
           <div className="input-actions">
+            {/* Send button */}
+            <button
+              className="send-btn"
+              onClick={handleSend}
+              disabled={disabled || !inputText.trim() || isActive}
+              title="Send message"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 2L11 13" />
+                <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+              </svg>
+            </button>
+
+            {/* Voice button */}
             {isActive ? (
               <button
                 className="voice-btn active"

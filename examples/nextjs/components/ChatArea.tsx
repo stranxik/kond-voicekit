@@ -12,21 +12,25 @@ export interface ChatMessage {
 
 interface ChatAreaProps {
   messages: ChatMessage[];
+  streamingText?: string;
+  isStreaming?: boolean;
 }
 
-export function ChatArea({ messages }: ChatAreaProps) {
+export function ChatArea({ messages, streamingText, isStreaming }: ChatAreaProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages arrive or streaming updates
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, streamingText]);
+
+  const showStreamingMessage = isStreaming && streamingText;
 
   return (
     <div className="chat-area" ref={scrollRef}>
-      {messages.length === 0 ? (
+      {messages.length === 0 && !showStreamingMessage ? (
         <div className="empty-state">
           <svg
             className="empty-state-icon"
@@ -42,8 +46,8 @@ export function ChatArea({ messages }: ChatAreaProps) {
           </svg>
           <div className="empty-state-title">Voice Chat</div>
           <p className="empty-state-description">
-            Click the microphone button to start a voice conversation.
-            Your speech will be transcribed and the AI will respond.
+            Click the microphone button to start a voice conversation,
+            or type a message below.
           </p>
         </div>
       ) : (
@@ -56,6 +60,15 @@ export function ChatArea({ messages }: ChatAreaProps) {
               timestamp={msg.timestamp}
             />
           ))}
+          {/* Streaming message indicator */}
+          {showStreamingMessage && (
+            <Message
+              role="assistant"
+              content={streamingText}
+              timestamp={new Date()}
+              isStreaming
+            />
+          )}
         </div>
       )}
     </div>

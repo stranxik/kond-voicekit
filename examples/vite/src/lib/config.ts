@@ -5,9 +5,13 @@
 
 import type { LLMProvider } from "./llm-providers";
 
+export type Locale = "fr" | "en" | "multi";
+
 export interface AppConfig {
   voicekit: {
     apiKey: string;
+    voiceId: string;
+    locale: Locale;
     isConfigured: boolean;
   };
   llm: {
@@ -27,7 +31,19 @@ function getEnv(key: string, fallback = ""): string {
 
 export function getConfig(): AppConfig {
   const voicekitApiKey = getEnv("VOICEKIT_API_KEY");
+  const voiceIdRaw = getEnv("ELEVENLABS_VOICE_ID");
+  const localeRaw = getEnv("LOCALE", "en");
   const llmProvider = (getEnv("LLM_PROVIDER", "echo") as LLMProvider);
+
+  // Validate locale
+  const validLocales = ["fr", "en", "multi"] as const;
+  const locale: Locale = validLocales.includes(localeRaw as typeof validLocales[number])
+    ? (localeRaw as Locale)
+    : "en";
+
+  // Derive default voice from locale if not explicitly set
+  const defaultVoice = locale === "fr" ? "pNInz6obpgDQGcFmaJgB" : "21m00Tcm4TlvDq8ikWAM";
+  const voiceId = voiceIdRaw || defaultVoice;
   const anthropicApiKey = getEnv("ANTHROPIC_API_KEY");
   const openaiApiKey = getEnv("OPENAI_API_KEY");
   const ollamaUrl = getEnv("OLLAMA_URL", "http://localhost:11434");
@@ -57,6 +73,8 @@ export function getConfig(): AppConfig {
   return {
     voicekit: {
       apiKey: voicekitApiKey,
+      voiceId,
+      locale,
       isConfigured: !!voicekitApiKey,
     },
     llm: {

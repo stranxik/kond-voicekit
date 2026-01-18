@@ -7,9 +7,13 @@
 
 import type { LLMProvider } from "./llm-providers";
 
+export type Locale = "fr" | "en" | "multi";
+
 export interface AppConfig {
   voicekit: {
     apiKey: string;
+    voiceId: string;
+    locale: Locale;
     isConfigured: boolean;
   };
   llm: {
@@ -24,7 +28,19 @@ export interface AppConfig {
 export function getConfig(): AppConfig {
   // Next.js requires static access to NEXT_PUBLIC_ vars (no dynamic keys)
   const voicekitApiKey = process.env.NEXT_PUBLIC_VOICEKIT_API_KEY || "";
+  const voiceIdRaw = process.env.NEXT_PUBLIC_ELEVENLABS_VOICE_ID || "";
+  const localeRaw = process.env.NEXT_PUBLIC_LOCALE || "en";
   const llmProvider = (process.env.NEXT_PUBLIC_LLM_PROVIDER || "echo") as LLMProvider;
+
+  // Validate locale
+  const validLocales = ["fr", "en", "multi"] as const;
+  const locale: Locale = validLocales.includes(localeRaw as typeof validLocales[number])
+    ? (localeRaw as Locale)
+    : "en";
+
+  // Derive default voice from locale if not explicitly set
+  const defaultVoice = locale === "fr" ? "pNInz6obpgDQGcFmaJgB" : "21m00Tcm4TlvDq8ikWAM";
+  const voiceId = voiceIdRaw || defaultVoice;
   const anthropicApiKey = process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY || "";
   const openaiApiKey = process.env.NEXT_PUBLIC_OPENAI_API_KEY || "";
   const ollamaUrl = process.env.NEXT_PUBLIC_OLLAMA_URL || "http://localhost:11434";
@@ -54,6 +70,8 @@ export function getConfig(): AppConfig {
   return {
     voicekit: {
       apiKey: voicekitApiKey,
+      voiceId,
+      locale,
       isConfigured: !!voicekitApiKey,
     },
     llm: {

@@ -57,8 +57,8 @@ export const VOICE_PRESETS = {
  * Default configuration values
  */
 export const DEFAULTS = {
-  /** Default voice */
-  voice: "marie-fr",
+  /** Default base URL for API calls (production) */
+  baseUrl: "https://kond.studio/api/voice/v1",
   /** Default locale */
   locale: "fr" as const,
   /** Default worklet URL */

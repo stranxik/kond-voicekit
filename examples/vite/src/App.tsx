@@ -11,6 +11,8 @@ const config = getConfig();
 export default function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [streamingText, setStreamingText] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
   const historyRef = useRef<Array<{ role: "user" | "assistant"; content: string }>>([]);
 
   const addMessage = useCallback((role: "user" | "assistant", content: string) => {
@@ -27,10 +29,12 @@ export default function App() {
     }
   }, []);
 
-  const handleTranscript = useCallback(
-    async (text: string) => {
+  const processUserInput = useCallback(
+    async (text: string, speakResponse: boolean = true) => {
       setError(null);
       addMessage("user", text);
+      setIsStreaming(true);
+      setStreamingText("");
 
       const llmConfig: LLMConfig = {
         provider: config.llm.provider,
@@ -41,9 +45,28 @@ export default function App() {
 
       try {
         const response = await callLLM(text, llmConfig, historyRef.current.slice(0, -1));
+
+        // Simulate streaming effect for non-streaming providers
+        const words = response.split(" ");
+        let accumulated = "";
+
+        for (let i = 0; i < words.length; i++) {
+          accumulated += (i === 0 ? "" : " ") + words[i];
+          setStreamingText(accumulated);
+          // Small delay between words for typing effect
+          await new Promise((resolve) => setTimeout(resolve, 30));
+        }
+
+        setIsStreaming(false);
+        setStreamingText("");
         addMessage("assistant", response);
-        voice.speak(response);
+
+        if (speakResponse) {
+          voice.speak(response);
+        }
       } catch (err) {
+        setIsStreaming(false);
+        setStreamingText("");
         const errorMessage = err instanceof Error ? err.message : "Failed to get response";
         setError(errorMessage);
         console.error("LLM error:", err);
@@ -52,9 +75,24 @@ export default function App() {
     [addMessage]
   );
 
+  const handleTranscript = useCallback(
+    async (text: string) => {
+      await processUserInput(text, true);
+    },
+    [processUserInput]
+  );
+
+  const handleSendText = useCallback(
+    async (text: string) => {
+      await processUserInput(text, false); // Text input → no TTS
+    },
+    [processUserInput]
+  );
+
   const voice = useVoiceKit({
     apiKey: config.voicekit.apiKey,
-    locale: "en",
+    locale: config.voicekit.locale,
+    voice: config.voicekit.voiceId || undefined,
     onTranscript: handleTranscript,
   });
 
@@ -94,13 +132,18 @@ export default function App() {
           </div>
         )}
 
-        <ChatArea messages={messages} />
+        <ChatArea
+          messages={messages}
+          streamingText={streamingText}
+          isStreaming={isStreaming}
+        />
 
         <ChatInput
           voiceState={voice.state}
           onStart={voice.start}
           onStop={voice.stop}
-          disabled={!canStart}
+          onSendText={handleSendText}
+          disabled={!canStart || isStreaming}
         />
       </main>
     </div>

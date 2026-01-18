@@ -886,8 +886,8 @@ declare const VOICE_PRESETS: {
  * Default configuration values
  */
 declare const DEFAULTS: {
-    /** Default voice */
-    voice: string;
+    /** Default base URL for API calls (production) */
+    baseUrl: string;
     /** Default locale */
     locale: "fr";
     /** Default worklet URL */

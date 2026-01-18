@@ -151,7 +151,7 @@ export class VoiceKit {
 
     // Initialize HTTP client (injectable or default)
     this.httpClient = this.deps.httpClient ?? new FetchHttpClient({
-      baseUrl: this.config.baseUrl || DEFAULTS.voice,
+      baseUrl: this.config.baseUrl || DEFAULTS.baseUrl,
     });
 
     // Initialize TTS source if provided, otherwise create lazily
@@ -161,9 +161,10 @@ export class VoiceKit {
 
     // Configure legacy TTS streaming for backward compatibility
     // TODO: Remove this once all code migrates to TTSPlayer
-    const ttsStreamUrl = this.config.baseUrl
-      ? buildEndpointUrl(this.config.baseUrl, "ttsStream")
-      : "/api/voice/v1/tts/stream";
+    const ttsStreamUrl = buildEndpointUrl(
+      this.config.baseUrl || DEFAULTS.baseUrl,
+      "ttsStream"
+    );
     configureTTSStreaming({ ttsStreamUrl });
   }
 
