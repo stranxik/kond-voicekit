@@ -36,7 +36,8 @@ const DEFAULT_CONFIG: Required<Omit<SileroVADConfig, "baseAssetPath" | "onnxWASM
   minSpeechDuration: 250,
   silenceDuration: 700,
   hysteresisFrames: 3,
-  baseAssetPath: "/",
+  // Use jsdelivr CDN for VAD model - avoids need to copy 2.3MB file to public/
+  baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.30/dist/",
   onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.23.2/dist/",
   modelVersion: "v5",
 };

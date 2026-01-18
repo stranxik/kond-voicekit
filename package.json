@@ -1,6 +1,6 @@
 {
   "name": "@kond.studio/voicekit",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Voice SDK for AI agents - STT, TTS, Turn Detection",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
