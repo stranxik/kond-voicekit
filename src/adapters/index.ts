@@ -63,7 +63,7 @@ export {
 } from "./turn-detector";
 export type { HeuristicTurnDetectorOptions } from "./turn-detector";
 
-// ONNX (local ML - stub)
+// ONNX (local ML inference)
 export { OnnxTurnDetector, createOnnxTurnDetector } from "./turn-detector";
 export type { OnnxTurnDetectorOptions } from "./turn-detector";
 
@@ -74,3 +74,18 @@ export type { CloudTurnDetectorOptions } from "./turn-detector";
 // Mock (testing)
 export { MockTurnDetector, createMockTurnDetector } from "./turn-detector";
 export type { MockTurnDetectorOptions } from "./turn-detector";
+
+// Turn detector support utilities (for advanced use)
+export { BPETokenizer, ModelCache, getModelCache } from "./turn-detector";
+export type { TokenizerConfig, ModelMetadata } from "./turn-detector";
+
+// =============================================================================
+// Utilities
+// =============================================================================
+
+export {
+  detectDeviceCapabilities,
+  canRunLocalOnnxInference,
+  getOnnxCapabilityReason,
+} from "./utils";
+export type { DeviceCapabilities } from "./utils";

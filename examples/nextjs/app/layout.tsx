@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "VoiceKit Demo Agent",
-  description: "Voice AI Agent example using @kond/voicekit",
+  description: "Voice AI Agent example using @kond.studio/voicekit",
 };
 
 export default function RootLayout({

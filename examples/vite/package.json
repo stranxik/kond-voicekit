@@ -1,5 +1,5 @@
 {
-  "name": "@kond/voicekit-example-vite",
+  "name": "@kond.studio/voicekit-example-vite",
   "version": "0.1.0",
   "private": true,
   "type": "module",

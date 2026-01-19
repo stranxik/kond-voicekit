@@ -6,12 +6,14 @@
 import type { LLMProvider } from "./llm-providers";
 
 export type Locale = "fr" | "en" | "multi";
+export type TurnDetectorType = "auto" | "local" | "cloud" | "heuristic";
 
 export interface AppConfig {
   voicekit: {
     apiKey: string;
     voiceId: string;
     locale: Locale;
+    turnDetectorType: TurnDetectorType;
     isConfigured: boolean;
   };
   llm: {
@@ -33,6 +35,7 @@ export function getConfig(): AppConfig {
   const voicekitApiKey = getEnv("VOICEKIT_API_KEY");
   const voiceIdRaw = getEnv("ELEVENLABS_VOICE_ID");
   const localeRaw = getEnv("LOCALE", "en");
+  const turnDetectorRaw = getEnv("TURN_DETECTOR", "auto");
   const llmProvider = (getEnv("LLM_PROVIDER", "echo") as LLMProvider);
 
   // Validate locale
@@ -40,6 +43,12 @@ export function getConfig(): AppConfig {
   const locale: Locale = validLocales.includes(localeRaw as typeof validLocales[number])
     ? (localeRaw as Locale)
     : "en";
+
+  // Validate turn detector type
+  const validTurnDetectors = ["auto", "local", "cloud", "heuristic"] as const;
+  const turnDetectorType: TurnDetectorType = validTurnDetectors.includes(turnDetectorRaw as typeof validTurnDetectors[number])
+    ? (turnDetectorRaw as TurnDetectorType)
+    : "auto";
 
   // Derive default voice from locale if not explicitly set
   const defaultVoice = locale === "fr" ? "pNInz6obpgDQGcFmaJgB" : "21m00Tcm4TlvDq8ikWAM";
@@ -75,6 +84,7 @@ export function getConfig(): AppConfig {
       apiKey: voicekitApiKey,
       voiceId,
       locale,
+      turnDetectorType,
       isConfigured: !!voicekitApiKey,
     },
     llm: {

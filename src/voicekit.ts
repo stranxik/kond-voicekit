@@ -31,6 +31,7 @@ import type {
   ConversationState,
   Locale,
   VoiceKitError,
+  TurnDetectorType,
 } from "./types/config";
 import { DEFAULT_CONFIG } from "./types/config";
 import type { StreamingSTTPort } from "./ports/stt";
@@ -49,6 +50,7 @@ import {
 } from "./adapters/turn-detector";
 import { FetchHttpClient } from "./adapters/http";
 import { HttpTTSSource } from "./adapters/tts";
+import { detectDeviceCapabilities } from "./adapters/utils/device-capability";
 
 // Core
 import { createTurnManager, type TurnManager } from "./core/turn-manager";
@@ -229,7 +231,7 @@ export class VoiceKit {
       await this.vad.init?.();
 
       // Initialize Turn Detector based on config
-      const detectorType = this.config.turnDetection?.type || "auto";
+      const detectorType: TurnDetectorType = this.config.turnDetection?.type || "auto";
       this.turnDetector = await this.createTurnDetector(detectorType);
       await this.turnDetector.init();
 
@@ -266,8 +268,17 @@ export class VoiceKit {
 
   /**
    * Create the appropriate turn detector based on type
+   *
+   * Strategy:
+   * - "local" / "onnx": Force local ONNX inference (desktop only)
+   * - "cloud": Force cloud API inference
+   * - "heuristic": Fast regex-based fallback
+   * - "auto" (default): Device capability detection:
+   *   - Desktop with 4GB+ RAM → local ONNX
+   *   - Mobile or low memory → cloud API
+   *   - No auth → heuristic fallback
    */
-  private async createTurnDetector(type: string): Promise<TurnDetectorProvider> {
+  private async createTurnDetector(type: TurnDetectorType): Promise<TurnDetectorProvider> {
     const baseConfig = {
       debug: this.config.debug,
       confidenceThreshold: this.config.turnDetection?.confidenceThreshold || 0.7,
@@ -285,24 +296,89 @@ export class VoiceKit {
     };
 
     // Check if we have valid auth for cloud detector
-    const hasCloudAuth = this.config.apiKey || this.config.token;
+    const hasCloudAuth = !!(this.config.apiKey || this.config.token);
 
     switch (type) {
-      case "cloud":
-        return createCloudTurnDetector(cloudOptions);
+      case "local":
       case "onnx":
-        // ONNX stub kept for future v2, but not recommended
+        // Force local ONNX inference
+        if (this.config.debug) {
+          console.log("[VoiceKit] Using local ONNX turn detector");
+        }
         return createOnnxTurnDetector(baseConfig);
+
+      case "cloud":
+        // Force cloud API
+        if (this.config.debug) {
+          console.log("[VoiceKit] Using cloud turn detector");
+        }
+        return createCloudTurnDetector(cloudOptions);
+
       case "heuristic":
-        return createHeuristicTurnDetector(baseConfig);
-      case "auto":
-      default:
-        // Auto: use cloud if apiKey or token available, otherwise heuristic fallback
-        if (hasCloudAuth) {
-          return createCloudTurnDetector(cloudOptions);
+        // Force heuristic fallback
+        if (this.config.debug) {
+          console.log("[VoiceKit] Using heuristic turn detector");
         }
         return createHeuristicTurnDetector(baseConfig);
+
+      case "auto":
+      default:
+        // Auto: device capability detection
+        return this.createAutoTurnDetector(baseConfig, cloudOptions, hasCloudAuth);
     }
+  }
+
+  /**
+   * Auto-select turn detector based on device capabilities
+   *
+   * Decision tree:
+   * 1. Can run local ONNX? (desktop with 4GB+ RAM, WebAssembly, IndexedDB)
+   *    → Use local ONNX for fastest latency
+   * 2. Has cloud auth? (apiKey or token)
+   *    → Use cloud API
+   * 3. No auth?
+   *    → Fall back to heuristic
+   */
+  private createAutoTurnDetector(
+    baseConfig: { debug?: boolean; confidenceThreshold: number; detectBackchannels: boolean },
+    cloudOptions: Parameters<typeof createCloudTurnDetector>[0],
+    hasCloudAuth: boolean
+  ): TurnDetectorProvider {
+    // Detect device capabilities
+    const capabilities = detectDeviceCapabilities();
+
+    if (this.config.debug) {
+      console.log("[VoiceKit] Device capabilities:", {
+        canRunLocalOnnx: capabilities.canRunLocalOnnx,
+        isMobile: capabilities.isMobile,
+        deviceMemoryGB: capabilities.deviceMemoryGB,
+        hasWebAssembly: capabilities.hasWebAssembly,
+        hasIndexedDB: capabilities.hasIndexedDB,
+      });
+    }
+
+    // Strategy: Prefer local ONNX on capable devices
+    if (capabilities.canRunLocalOnnx) {
+      if (this.config.debug) {
+        console.log("[VoiceKit] Auto: Using local ONNX turn detector (capable device)");
+      }
+      return createOnnxTurnDetector(baseConfig);
+    }
+
+    // Fall back to cloud if we have auth
+    if (hasCloudAuth) {
+      const reason = capabilities.isMobile ? "mobile device" : "low memory/no WASM support";
+      if (this.config.debug) {
+        console.log(`[VoiceKit] Auto: Using cloud turn detector (${reason})`);
+      }
+      return createCloudTurnDetector(cloudOptions);
+    }
+
+    // No auth and can't run local → heuristic
+    if (this.config.debug) {
+      console.log("[VoiceKit] Auto: Using heuristic turn detector (no auth, can't run local)");
+    }
+    return createHeuristicTurnDetector(baseConfig);
   }
 
   /**
@@ -435,8 +511,16 @@ export class VoiceKit {
 
     // Create TTS queue if not exists
     if (!this.ttsQueue) {
+      // Build explicit TTS stream URL to avoid relative path issues in external apps
+      const ttsStreamUrl = buildEndpointUrl(
+        this.config.baseUrl || DEFAULTS.baseUrl,
+        "ttsStream"
+      );
+
       this.ttsQueue = createTTSQueue({
         locale: this.locale,
+        ttsStreamUrl, // Pass explicit URL to avoid localhost resolution
+        apiKey: this.config.apiKey, // Pass API key for authentication
         onStart: () => this.setState("speaking"),
         onEnd: () => {
           this.ttsQueue = null;

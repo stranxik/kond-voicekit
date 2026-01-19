@@ -45,6 +45,10 @@ interface TTSQueueOptions {
   locale: Locale;
   /** ElevenLabs voice ID (optional, defaults to locale-based selection) */
   voice?: string;
+  /** Explicit TTS stream endpoint URL (overrides global config) */
+  ttsStreamUrl?: string;
+  /** API key for authentication */
+  apiKey?: string;
   onStart?: () => void;
   onEnd?: () => void;
   onError?: (error: Error) => void;
@@ -66,7 +70,7 @@ interface TTSQueue {
  * Create a TTS queue for progressive playback with pre-fetching
  */
 export function createTTSQueue(options: TTSQueueOptions): TTSQueue {
-  const { locale, voice, onStart, onEnd, onError, debug = false } = options;
+  const { locale, voice, ttsStreamUrl, apiKey, onStart, onEnd, onError, debug = false } = options;
 
   // Queue state - now stores items with optional model
   const queue: QueueItem[] = [];
@@ -122,7 +126,7 @@ export function createTTSQueue(options: TTSQueueOptions): TTSQueue {
     nextItem = item;
     log("Prefetching N+1:", item.text.substring(0, 40) + "...", item.ttsModel ? `(${item.ttsModel})` : "");
 
-    prefetchAudio(item.text, locale, item.ttsModel, voice)
+    prefetchAudio(item.text, locale, item.ttsModel, voice, ttsStreamUrl, apiKey)
       .then((preloaded) => {
         isPrefetching = false;
         if (isCancelled) {
@@ -169,7 +173,7 @@ export function createTTSQueue(options: TTSQueueOptions): TTSQueue {
       extendedPrefetchPending.add(key);
       log("Prefetching N+2/3:", item.text.substring(0, 30) + "...");
 
-      prefetchAudio(item.text, locale, item.ttsModel, voice)
+      prefetchAudio(item.text, locale, item.ttsModel, voice, ttsStreamUrl, apiKey)
         .then((preloaded) => {
           extendedPrefetchPending.delete(key);
           if (isCancelled) {
@@ -279,7 +283,9 @@ export function createTTSQueue(options: TTSQueueOptions): TTSQueue {
           }
         },
         item.ttsModel,
-        voice
+        voice,
+        ttsStreamUrl,
+        apiKey
       );
     } catch (err) {
       isPlaying = false;

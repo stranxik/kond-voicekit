@@ -13,6 +13,16 @@
 export type Locale = "fr" | "en" | "multi";
 
 /**
+ * Turn detector type
+ * - "auto": Automatic selection (ONNX on capable desktops, cloud otherwise)
+ * - "local": Force local ONNX inference (~25-50ms latency)
+ * - "cloud": Force cloud API inference (~100-200ms latency)
+ * - "heuristic": Fast regex-based fallback (~1ms, no ML)
+ * - "onnx": Alias for "local"
+ */
+export type TurnDetectorType = "auto" | "local" | "cloud" | "heuristic" | "onnx";
+
+/**
  * Conversation state machine states
  */
 export type ConversationState =
@@ -73,7 +83,7 @@ export interface VoiceKitConfig {
   /**
    * VoiceKit API key (vk_xxx)
    * Get your key at: https://kond.studio/developers/voicekit/keys
-   * Free tier: 100 min/month
+   * Free tier: 10 min/month
    *
    * Either `apiKey` OR `token`+`tokenWsUrl` is required.
    */
@@ -153,8 +163,16 @@ export interface VoiceKitConfig {
    * Turn detection tuning
    */
   turnDetection?: {
-    /** Force specific turn detector type @default "auto" */
-    type?: "auto" | "cloud" | "onnx" | "heuristic";
+    /**
+     * Turn detector type
+     * - "auto" (default): Uses local ONNX on capable desktops, cloud on mobile/low-memory
+     * - "local": Force local ONNX inference (desktop only, ~25-50ms latency)
+     * - "cloud": Force cloud API (~100-200ms latency, works everywhere)
+     * - "heuristic": Fast regex-based fallback (~1ms, no ML)
+     * - "onnx": Alias for "local"
+     * @default "auto"
+     */
+    type?: TurnDetectorType;
     /** Minimum confidence to commit turn (0-1) @default 0.7 */
     confidenceThreshold?: number;
     /** Silence timeout before committing (ms) @default 1200 */

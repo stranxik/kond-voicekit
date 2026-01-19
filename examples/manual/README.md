@@ -1,6 +1,6 @@
 # VoiceKit Manual (Vanilla JS) Example
 
-A voice AI agent demo using [@kond/voicekit](https://github.com/stranxik/kond/tree/main/packages/voicekit) with vanilla JavaScript - no build step required.
+A voice AI agent demo using [@kond.studio/voicekit](https://github.com/stranxik/kond/tree/main/packages/voicekit) with vanilla JavaScript - no build step required.
 
 ## Features
 
@@ -29,11 +29,11 @@ Just open `index.html` in your browser. Note: Some browsers may block module imp
 
 ## SDK Setup
 
-When `@kond/voicekit` is published to npm, you can import it from a CDN:
+When `@kond.studio/voicekit` is published to npm, you can import it from a CDN:
 
 ```html
 <script type="module">
-  import { VoiceKit } from "https://esm.sh/@kond/voicekit";
+  import { VoiceKit } from "https://esm.sh/@kond.studio/voicekit";
 
   const voice = new VoiceKit({
     apiKey: "your_key",

@@ -238,6 +238,8 @@ async function waitForPlaybackComplete(): Promise<void> {
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
  * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
+ * @param ttsStreamUrl Optional explicit TTS endpoint URL (overrides global config)
+ * @param apiKey Optional API key for authentication
  */
 export async function speakTextStreaming(
   text: string,
@@ -246,7 +248,9 @@ export async function speakTextStreaming(
   onEnd?: () => void,
   onError?: (error: Error) => void,
   ttsModel?: TtsModel,
-  voice?: string
+  voice?: string,
+  ttsStreamUrl?: string,
+  apiKey?: string
 ): Promise<void> {
   // Reset state
   stopStreamingTTS();
@@ -256,10 +260,19 @@ export async function speakTextStreaming(
 
   const ctx = getAudioContext();
 
+  // Use explicit URL if provided, otherwise fall back to global config
+  const url = ttsStreamUrl || config.ttsStreamUrl;
+
+  // Build headers with optional auth
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
   try {
-    const response = await fetch(config.ttsStreamUrl, {
+    const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ text, locale, ttsModel, voice }),
     });
 
@@ -324,9 +337,11 @@ export function speakTextStreamingWithCallback(
   onEnd: () => void,
   onError?: (error: Error) => void,
   ttsModel?: TtsModel,
-  voice?: string
+  voice?: string,
+  ttsStreamUrl?: string,
+  apiKey?: string
 ): void {
-  speakTextStreaming(text, locale, undefined, onEnd, onError, ttsModel, voice).catch((err) => {
+  speakTextStreaming(text, locale, undefined, onEnd, onError, ttsModel, voice, ttsStreamUrl, apiKey).catch((err) => {
     onError?.(err instanceof Error ? err : new Error("Streaming TTS failed"));
   });
 }
@@ -345,12 +360,16 @@ export function speakTextStreamingWithCallback(
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
  * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
+ * @param ttsStreamUrl Optional explicit TTS endpoint URL (overrides global config)
+ * @param apiKey Optional API key for authentication
  */
 export async function prefetchAudio(
   text: string,
   locale: Locale = "fr",
   ttsModel?: TtsModel,
-  voice?: string
+  voice?: string,
+  ttsStreamUrl?: string,
+  apiKey?: string
 ): Promise<PreloadedAudio> {
   const abortController = new AbortController();
   const preloaded: PreloadedAudio = {
@@ -360,10 +379,19 @@ export async function prefetchAudio(
     isComplete: false,
   };
 
+  // Use explicit URL if provided, otherwise fall back to global config
+  const url = ttsStreamUrl || config.ttsStreamUrl;
+
+  // Build headers with optional auth
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
   try {
-    const response = await fetch(config.ttsStreamUrl, {
+    const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ text, locale, ttsModel, voice }),
       signal: abortController.signal,
     });

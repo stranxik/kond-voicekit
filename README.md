@@ -72,7 +72,7 @@ VoiceKit is currently in **early access**.
 
 Get your free API key at [kond.studio/developers/voicekit/keys](https://kond.studio/developers/voicekit/keys).
 
-Free tier includes **100 minutes/month**.
+Free tier includes **10 minutes/month** to test.
 
 ---
 
@@ -274,7 +274,8 @@ VoiceKit handles the hard parts of voice:
 |---------|-------------|
 | **Speech-to-Text** | Optimized STT with streaming transcription |
 | **Text-to-Speech** | Natural voices with gapless audio queue |
-| **Turn Detection** | ML-powered end-of-utterance detection |
+| **Turn Detection** | ML-powered end-of-utterance detection with local ONNX or cloud |
+| **Local ML** | ONNX inference in browser (~25-50ms) for desktop devices |
 | **VAD** | Local voice activity detection |
 | **Barge-in** | Natural user interruption support |
 | **Backchannels** | Filters "mh", "yeah", "ok" (no LLM call) |
@@ -300,7 +301,7 @@ SUPPORTED LOCALES
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  PLAN              │ MINUTES/MONTH      │ PRICE        │ OVERAGE         │
 ├────────────────────┼────────────────────┼──────────────┼─────────────────┤
-│  Free              │ 100                │ $0/mo        │ Blocked         │
+│  Free              │ 10                 │ $0/mo        │ Blocked         │
 │  Starter           │ 500                │ $19/mo       │ $0.05/min       │
 │  Pro               │ 3000               │ $99/mo       │ $0.03/min       │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -335,20 +336,38 @@ SUPPORTED LOCALES
 
 ---
 
-## Turn Detection
+## Turn Detection Modes
 
-VoiceKit offers ML-powered turn detection:
+VoiceKit uses intelligent turn detection to know when you've finished speaking:
 
-| Mode | Accuracy | Latency | Cost |
-|------|----------|---------|------|
-| **cloud** (default) | Best | ~100ms | Metered |
-| **heuristic** | Basic | ~0ms | Free |
+| Mode | Best For | Latency |
+|------|----------|---------|
+| `auto` (default) | Most apps — auto-selects based on device | ~25-200ms |
+| `local` | Desktop apps wanting lowest latency | ~25-50ms |
+| `cloud` | Mobile apps, consistent behavior | ~100-200ms |
+| `heuristic` | Offline, testing | ~1-5ms |
+
+### Auto Mode (Default)
+
+```
+Device capable (desktop 4GB+ RAM, WebAssembly, IndexedDB)?
+├── YES → Local ONNX (~25-50ms)
+└── NO  → Cloud API (~100-200ms)
+```
 
 ```typescript
-// Use heuristic fallback (free)
+// Force local ONNX for lowest latency
+const voice = new VoiceKit({
+  apiKey: 'vk_xxx',
+  turnDetection: { type: 'local' },
+  onTranscript: ...
+});
+
+// Force heuristic for offline use
 const voice = new VoiceKit({
   apiKey: 'vk_xxx',
   turnDetection: { type: 'heuristic' },
+  onTranscript: ...
 });
 ```
 

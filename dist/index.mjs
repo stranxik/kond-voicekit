@@ -610,83 +610,889 @@ function createHeuristicTurnDetector(options) {
 }
 
 // src/adapters/turn-detector/onnx.ts
+import * as ort from "onnxruntime-web";
+
+// src/adapters/turn-detector/tokenizer.ts
+var BPETokenizer = class _BPETokenizer {
+  constructor(tokenizerConfig) {
+    this.initialized = false;
+    // Special tokens for chat template
+    this.BOS_TOKEN = "<|im_start|>";
+    this.EOS_TOKEN = "<|im_end|>";
+    this.PAD_TOKEN = "<|endoftext|>";
+    this.config = this.parseConfig(tokenizerConfig);
+    this.initialized = true;
+  }
+  /**
+   * Parse tokenizer config into internal format
+   */
+  parseConfig(config2) {
+    const vocab = /* @__PURE__ */ new Map();
+    const reverseVocab = /* @__PURE__ */ new Map();
+    for (const [token, id] of Object.entries(config2.vocab)) {
+      vocab.set(token, id);
+      reverseVocab.set(id, token);
+    }
+    const merges = /* @__PURE__ */ new Map();
+    for (const merge of config2.merges) {
+      const [a, b] = merge.split(" ");
+      if (a && b) {
+        merges.set(merge, a + b);
+      }
+    }
+    const specialTokens = /* @__PURE__ */ new Map();
+    if (config2.added_tokens) {
+      for (const token of config2.added_tokens) {
+        if (token.special) {
+          specialTokens.set(token.content, token.id);
+          if (!vocab.has(token.content)) {
+            vocab.set(token.content, token.id);
+            reverseVocab.set(token.id, token.content);
+          }
+        }
+      }
+    }
+    const unkToken = config2.model?.unk_token || "<unk>";
+    const unkTokenId = vocab.get(unkToken) ?? 0;
+    return {
+      vocab,
+      reverseVocab,
+      merges,
+      specialTokens,
+      unkToken,
+      unkTokenId
+    };
+  }
+  /**
+   * Encode text to token IDs
+   *
+   * @param text - Text to encode
+   * @param addSpecialTokens - Whether to add BOS/EOS tokens
+   * @returns Array of token IDs
+   */
+  encode(text, addSpecialTokens = false) {
+    if (!this.initialized) {
+      throw new Error("Tokenizer not initialized");
+    }
+    const normalized = this.normalize(text);
+    const words = this.preTokenize(normalized);
+    const tokens = [];
+    if (addSpecialTokens) {
+      const bosId = this.config.specialTokens.get(this.BOS_TOKEN);
+      if (bosId !== void 0) {
+        tokens.push(bosId);
+      }
+    }
+    for (const word of words) {
+      const wordTokens = this.encodeWord(word);
+      tokens.push(...wordTokens);
+    }
+    if (addSpecialTokens) {
+      const eosId = this.config.specialTokens.get(this.EOS_TOKEN);
+      if (eosId !== void 0) {
+        tokens.push(eosId);
+      }
+    }
+    return tokens;
+  }
+  /**
+   * Encode for chat template (turn detection format)
+   *
+   * Format: <|im_start|>user\n{history}\nuser: {transcript}<|im_end|>
+   *
+   * @param transcript - Current user transcript
+   * @param history - Optional conversation history
+   * @returns Array of token IDs
+   */
+  encodeForTurnDetection(transcript, history) {
+    let prompt = "";
+    if (history && history.length > 0) {
+      for (const turn of history) {
+        prompt += `${turn.role}: ${turn.content}
+`;
+      }
+    }
+    prompt += `user: ${transcript}`;
+    const fullPrompt = `${this.BOS_TOKEN}user
+${prompt}${this.EOS_TOKEN}`;
+    return this.encode(fullPrompt, false);
+  }
+  /**
+   * Decode token IDs back to text
+   *
+   * @param ids - Token IDs
+   * @returns Decoded text
+   */
+  decode(ids) {
+    if (!this.initialized) {
+      throw new Error("Tokenizer not initialized");
+    }
+    const tokens = [];
+    for (const id of ids) {
+      const token = this.config.reverseVocab.get(id);
+      if (token !== void 0) {
+        tokens.push(token);
+      }
+    }
+    return this.postProcess(tokens.join(""));
+  }
+  /**
+   * Get vocabulary size
+   */
+  get vocabSize() {
+    return this.config.vocab.size;
+  }
+  /**
+   * Get token ID for a specific token
+   */
+  getTokenId(token) {
+    return this.config.vocab.get(token);
+  }
+  // =========================================================================
+  // Internal methods
+  // =========================================================================
+  /**
+   * Normalize text (Unicode NFC)
+   */
+  normalize(text) {
+    return text.normalize("NFC");
+  }
+  /**
+   * Pre-tokenize: split text into words
+   * Uses GPT-2 style regex pre-tokenization
+   */
+  preTokenize(text) {
+    const pattern = /'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+/gu;
+    const matches = text.match(pattern);
+    return matches || [];
+  }
+  /**
+   * Encode a single word using BPE
+   */
+  encodeWord(word) {
+    if (this.config.vocab.has(word)) {
+      return [this.config.vocab.get(word)];
+    }
+    if (this.config.specialTokens.has(word)) {
+      return [this.config.specialTokens.get(word)];
+    }
+    let tokens = this.splitToChars(word);
+    tokens = this.applyBPE(tokens);
+    const ids = [];
+    for (const token of tokens) {
+      const id = this.config.vocab.get(token);
+      if (id !== void 0) {
+        ids.push(id);
+      } else {
+        const byteIds = this.encodeToBytes(token);
+        ids.push(...byteIds);
+      }
+    }
+    return ids;
+  }
+  /**
+   * Split word into initial character tokens
+   * Handles UTF-8 properly
+   */
+  splitToChars(word) {
+    const chars = [];
+    for (const char of word) {
+      chars.push(char);
+    }
+    return chars;
+  }
+  /**
+   * Apply BPE merges iteratively
+   */
+  applyBPE(tokens) {
+    if (tokens.length <= 1) {
+      return tokens;
+    }
+    let iteration = 0;
+    const maxIterations = 1e3;
+    while (iteration < maxIterations) {
+      let bestMergeIdx = -1;
+      let bestMergeKey = "";
+      for (let i = 0; i < tokens.length - 1; i++) {
+        const pair = `${tokens[i]} ${tokens[i + 1]}`;
+        if (this.config.merges.has(pair)) {
+          if (bestMergeIdx === -1) {
+            bestMergeIdx = i;
+            bestMergeKey = pair;
+          }
+        }
+      }
+      if (bestMergeIdx === -1) {
+        break;
+      }
+      const merged = this.config.merges.get(bestMergeKey);
+      tokens = [
+        ...tokens.slice(0, bestMergeIdx),
+        merged,
+        ...tokens.slice(bestMergeIdx + 2)
+      ];
+      iteration++;
+    }
+    return tokens;
+  }
+  /**
+   * Encode unknown characters as byte tokens
+   * Used as fallback for characters not in vocabulary
+   */
+  encodeToBytes(text) {
+    const ids = [];
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(text);
+    for (const byte of bytes) {
+      const byteToken = `<0x${byte.toString(16).toUpperCase().padStart(2, "0")}>`;
+      const id = this.config.vocab.get(byteToken);
+      if (id !== void 0) {
+        ids.push(id);
+      } else {
+        ids.push(this.config.unkTokenId);
+      }
+    }
+    return ids;
+  }
+  /**
+   * Post-process decoded text
+   * Handles GPT-style spacing markers
+   */
+  postProcess(text) {
+    return text.replace(/Ġ/g, " ").replace(/Ċ/g, "\n").trim();
+  }
+  // =========================================================================
+  // Static factory methods
+  // =========================================================================
+  /**
+   * Load tokenizer from a URL
+   *
+   * @param url - URL to tokenizer.json
+   * @returns Initialized tokenizer
+   */
+  static async fromUrl(url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to load tokenizer: ${response.status} ${response.statusText}`);
+    }
+    const config2 = await response.json();
+    return new _BPETokenizer(config2);
+  }
+  /**
+   * Create tokenizer from config object
+   *
+   * @param config - Tokenizer configuration
+   * @returns Initialized tokenizer
+   */
+  static fromConfig(config2) {
+    return new _BPETokenizer(config2);
+  }
+};
+
+// src/adapters/turn-detector/model-cache.ts
+var DB_NAME = "voicekit-models";
+var DB_VERSION = 1;
+var STORE_NAME = "onnx-models";
+var ModelCache = class {
+  constructor() {
+    this.db = null;
+    this.initPromise = null;
+    this.isInitialized = false;
+  }
+  /**
+   * Initialize the IndexedDB connection
+   * Safe to call multiple times - will only open once
+   */
+  async init() {
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+    if (this.isInitialized && this.db) {
+      return;
+    }
+    this.initPromise = this.openDatabase();
+    await this.initPromise;
+  }
+  async openDatabase() {
+    return new Promise((resolve, reject) => {
+      if (typeof indexedDB === "undefined") {
+        console.warn("[ModelCache] IndexedDB not available");
+        resolve();
+        return;
+      }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onerror = () => {
+        console.warn("[ModelCache] Failed to open database:", request.error);
+        resolve();
+      };
+      request.onsuccess = () => {
+        this.db = request.result;
+        this.isInitialized = true;
+        resolve();
+      };
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const store = db.createObjectStore(STORE_NAME, { keyPath: "modelId" });
+          store.createIndex("version", "metadata.version", { unique: false });
+        }
+      };
+    });
+  }
+  /**
+   * Get a cached model by ID
+   *
+   * @param modelId - Unique model identifier
+   * @param expectedVersion - Optional version for cache validation
+   * @returns Model ArrayBuffer or null if not cached/outdated
+   */
+  async getModel(modelId, expectedVersion) {
+    await this.init();
+    if (!this.db) {
+      return null;
+    }
+    return new Promise((resolve) => {
+      try {
+        const transaction = this.db.transaction(STORE_NAME, "readonly");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(modelId);
+        request.onerror = () => {
+          console.warn("[ModelCache] Failed to get model:", request.error);
+          resolve(null);
+        };
+        request.onsuccess = () => {
+          const result = request.result;
+          if (!result) {
+            resolve(null);
+            return;
+          }
+          if (expectedVersion && result.metadata.version !== expectedVersion) {
+            console.log(
+              `[ModelCache] Version mismatch for ${modelId}: cached=${result.metadata.version}, expected=${expectedVersion}`
+            );
+            resolve(null);
+            return;
+          }
+          resolve(result.data);
+        };
+      } catch (error) {
+        console.warn("[ModelCache] Error reading model:", error);
+        resolve(null);
+      }
+    });
+  }
+  /**
+   * Store a model in the cache
+   *
+   * @param modelId - Unique model identifier
+   * @param buffer - Model data
+   * @param metadata - Model metadata (version, source URL, etc.)
+   */
+  async setModel(modelId, buffer, metadata) {
+    await this.init();
+    if (!this.db) {
+      console.warn("[ModelCache] Database not available, skipping cache");
+      return;
+    }
+    return new Promise((resolve, reject) => {
+      try {
+        const transaction = this.db.transaction(STORE_NAME, "readwrite");
+        const store = transaction.objectStore(STORE_NAME);
+        const entry = {
+          modelId,
+          data: buffer,
+          metadata: {
+            ...metadata,
+            modelId,
+            sizeBytes: buffer.byteLength,
+            cachedAt: Date.now()
+          }
+        };
+        const request = store.put(entry);
+        request.onerror = () => {
+          console.warn("[ModelCache] Failed to store model:", request.error);
+          resolve();
+        };
+        request.onsuccess = () => {
+          console.log(
+            `[ModelCache] Cached model ${modelId} (${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB)`
+          );
+          resolve();
+        };
+      } catch (error) {
+        console.warn("[ModelCache] Error storing model:", error);
+        resolve();
+      }
+    });
+  }
+  /**
+   * Check if a model exists in cache
+   *
+   * @param modelId - Model identifier
+   * @param expectedVersion - Optional version check
+   * @returns True if model is cached (and version matches if specified)
+   */
+  async hasModel(modelId, expectedVersion) {
+    const model = await this.getModel(modelId, expectedVersion);
+    return model !== null;
+  }
+  /**
+   * Delete a model from cache
+   *
+   * @param modelId - Model identifier
+   */
+  async deleteModel(modelId) {
+    await this.init();
+    if (!this.db) {
+      return;
+    }
+    return new Promise((resolve) => {
+      try {
+        const transaction = this.db.transaction(STORE_NAME, "readwrite");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.delete(modelId);
+        request.onerror = () => {
+          console.warn("[ModelCache] Failed to delete model:", request.error);
+          resolve();
+        };
+        request.onsuccess = () => {
+          console.log(`[ModelCache] Deleted model ${modelId}`);
+          resolve();
+        };
+      } catch (error) {
+        console.warn("[ModelCache] Error deleting model:", error);
+        resolve();
+      }
+    });
+  }
+  /**
+   * Clear all cached models
+   */
+  async clear() {
+    await this.init();
+    if (!this.db) {
+      return;
+    }
+    return new Promise((resolve) => {
+      try {
+        const transaction = this.db.transaction(STORE_NAME, "readwrite");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.clear();
+        request.onerror = () => {
+          console.warn("[ModelCache] Failed to clear cache:", request.error);
+          resolve();
+        };
+        request.onsuccess = () => {
+          console.log("[ModelCache] Cache cleared");
+          resolve();
+        };
+      } catch (error) {
+        console.warn("[ModelCache] Error clearing cache:", error);
+        resolve();
+      }
+    });
+  }
+  /**
+   * Get cache metadata for all stored models
+   */
+  async getMetadata() {
+    await this.init();
+    if (!this.db) {
+      return [];
+    }
+    return new Promise((resolve) => {
+      try {
+        const transaction = this.db.transaction(STORE_NAME, "readonly");
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+        request.onerror = () => {
+          console.warn("[ModelCache] Failed to get metadata:", request.error);
+          resolve([]);
+        };
+        request.onsuccess = () => {
+          const entries = request.result;
+          resolve(entries.map((e) => e.metadata));
+        };
+      } catch (error) {
+        console.warn("[ModelCache] Error getting metadata:", error);
+        resolve([]);
+      }
+    });
+  }
+  /**
+   * Close the database connection
+   */
+  close() {
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+      this.isInitialized = false;
+      this.initPromise = null;
+    }
+  }
+};
+
+// src/config/defaults.ts
+var ENVIRONMENTS = {
+  production: {
+    baseUrl: "https://kond.studio/api/voice/v1"
+  },
+  staging: {
+    baseUrl: "https://staging.kond.studio/api/voice/v1"
+  },
+  development: {
+    baseUrl: "http://localhost:3000/api/voice/v1"
+  }
+};
+var ENDPOINTS = {
+  /** Token exchange endpoint */
+  token: "/token",
+  /** Turn detection API */
+  turnDetect: "/turn-detect",
+  /** TTS streaming endpoint */
+  ttsStream: "/tts/stream"
+};
+var VOICE_PRESETS = {
+  "marie-fr": "9BWtsMINqrJLrRacOk9x",
+  // ElevenLabs voice ID
+  "thomas-fr": "ThT5KcBeYPX3keUQqHPh",
+  "emma-en": "21m00Tcm4TlvDq8ikWAM",
+  "james-en": "JBFqnCBsd6RMkjVDRZzb"
+};
+var DEFAULTS = {
+  /** Default base URL for API calls (production) */
+  baseUrl: "https://kond.studio/api/voice/v1",
+  /** Default locale */
+  locale: "fr",
+  /** Default worklet URL */
+  workletUrl: "/audio-processor.worklet.js",
+  /** Turn detection defaults */
+  turnDetection: {
+    type: "auto",
+    confidenceThreshold: 0.7,
+    silenceTimeoutMs: 1200,
+    detectBackchannels: true
+  },
+  /** TTS defaults */
+  tts: {
+    speed: 1
+  },
+  /** Internal timing */
+  timing: {
+    cooldownMs: 150,
+    gracePeriodMs: 2e3,
+    maxSilenceMs: 2500
+  },
+  /** Debug mode */
+  debug: false
+};
+var ONNX_DEFAULTS = {
+  /** ONNX model file (quantized INT8 for smaller size) */
+  modelUrl: "https://huggingface.co/livekit/turn-detector/resolve/main/onnx/model_q8.onnx",
+  /** Tokenizer config file */
+  tokenizerUrl: "https://huggingface.co/livekit/turn-detector/resolve/main/tokenizer.json",
+  /** Model version for cache invalidation */
+  modelVersion: "1.2.0",
+  /** Enable IndexedDB caching */
+  enableCache: true,
+  /** ONNX execution provider */
+  executionProvider: "wasm",
+  /** EOT probability threshold (0.6 = 60% confidence for end-of-turn) */
+  eotThreshold: 0.6,
+  /** Maximum input sequence length */
+  maxSeqLength: 512
+};
+function getEnvironmentConfig(env2) {
+  if (env2 && env2 in ENVIRONMENTS) {
+    return ENVIRONMENTS[env2];
+  }
+  if (typeof process !== "undefined" && process.env?.NODE_ENV) {
+    const nodeEnv = process.env.NODE_ENV;
+    if (nodeEnv in ENVIRONMENTS) {
+      return ENVIRONMENTS[nodeEnv];
+    }
+  }
+  return ENVIRONMENTS.production;
+}
+function buildEndpointUrl(baseUrl, endpoint) {
+  const base = baseUrl.replace(/\/$/, "");
+  return `${base}${ENDPOINTS[endpoint]}`;
+}
+function resolveVoiceId(voice) {
+  if (voice in VOICE_PRESETS) {
+    return VOICE_PRESETS[voice];
+  }
+  return voice;
+}
+function validateSecureUrl(baseUrl, debug) {
+  const isProduction = typeof process !== "undefined" && process.env?.NODE_ENV === "production";
+  const isLocalhost = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1");
+  const isHttps = baseUrl.startsWith("https://");
+  if (!isHttps && !isLocalhost) {
+    if (isProduction) {
+      throw new Error(
+        `[VoiceKit] Security: HTTPS is required in production. Got: ${baseUrl.substring(0, 50)}`
+      );
+    } else if (debug) {
+      console.warn(
+        `[VoiceKit] Security warning: Using HTTP in non-production. Consider using HTTPS for ${baseUrl.substring(0, 50)}`
+      );
+    }
+  }
+}
+
+// src/adapters/turn-detector/onnx.ts
 var OnnxTurnDetector = class {
   constructor(options = {}) {
     this.name = "onnx";
-    this.history = [];
+    this.session = null;
+    this.tokenizer = null;
+    this.conversationHistory = [];
     this.initialized = false;
-    this.options = options;
+    this.initPromise = null;
+    this.initFailed = false;
     this.config = {
       ...DEFAULT_TURN_DETECTOR_CONFIG,
       ...options
     };
-  }
-  async init() {
-    if (this.initialized) return;
-    if (this.config.debug) {
-      console.log("[OnnxTurnDetector] Initializing (STUB)...");
-      console.warn(
-        "[OnnxTurnDetector] Full implementation pending - falling back to heuristic behavior"
-      );
-    }
-    this.initialized = true;
+    this.onnxConfig = {
+      modelUrl: options.modelUrl || ONNX_DEFAULTS.modelUrl,
+      tokenizerUrl: options.tokenizerUrl || ONNX_DEFAULTS.tokenizerUrl,
+      modelVersion: options.modelVersion || ONNX_DEFAULTS.modelVersion,
+      enableCache: options.enableCache ?? ONNX_DEFAULTS.enableCache,
+      executionProvider: options.executionProvider || ONNX_DEFAULTS.executionProvider,
+      eotThreshold: options.eotThreshold ?? ONNX_DEFAULTS.eotThreshold,
+      maxSeqLength: options.maxSeqLength ?? ONNX_DEFAULTS.maxSeqLength
+    };
+    this.modelCache = new ModelCache();
+    this.heuristicFallback = new HeuristicTurnDetector({
+      ...options,
+      debug: this.config.debug
+    });
   }
   /**
-   * STUB: Returns heuristic-based prediction
-   * Full implementation would run ONNX inference
+   * Initialize the ONNX session and tokenizer
+   * Downloads and caches model on first load
+   */
+  async init() {
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+    if (this.initialized) {
+      return;
+    }
+    this.initPromise = this.doInit();
+    return this.initPromise;
+  }
+  async doInit() {
+    try {
+      if (this.config.debug) {
+        console.log("[OnnxTurnDetector] Initializing...");
+      }
+      ort.env.wasm.numThreads = 1;
+      ort.env.wasm.simd = true;
+      await this.modelCache.init();
+      if (this.config.debug) {
+        console.log("[OnnxTurnDetector] Loading tokenizer...");
+      }
+      this.tokenizer = await BPETokenizer.fromUrl(this.onnxConfig.tokenizerUrl);
+      let modelBuffer = await this.modelCache.getModel(
+        "turn-detector",
+        this.onnxConfig.modelVersion
+      );
+      if (modelBuffer) {
+        if (this.config.debug) {
+          console.log("[OnnxTurnDetector] Loaded model from cache");
+        }
+      } else {
+        if (this.config.debug) {
+          console.log("[OnnxTurnDetector] Downloading model...");
+        }
+        const response = await fetch(this.onnxConfig.modelUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to download model: ${response.status}`);
+        }
+        modelBuffer = await response.arrayBuffer();
+        if (this.onnxConfig.enableCache) {
+          await this.modelCache.setModel("turn-detector", modelBuffer, {
+            version: this.onnxConfig.modelVersion,
+            sourceUrl: this.onnxConfig.modelUrl
+          });
+        }
+        if (this.config.debug) {
+          console.log(
+            `[OnnxTurnDetector] Downloaded model (${(modelBuffer.byteLength / 1024 / 1024).toFixed(1)}MB)`
+          );
+        }
+      }
+      if (this.config.debug) {
+        console.log("[OnnxTurnDetector] Creating ONNX session...");
+      }
+      this.session = await ort.InferenceSession.create(modelBuffer, {
+        executionProviders: [this.onnxConfig.executionProvider],
+        graphOptimizationLevel: "all"
+      });
+      this.initialized = true;
+      if (this.config.debug) {
+        console.log("[OnnxTurnDetector] Initialized successfully");
+        console.log("[OnnxTurnDetector] Input names:", this.session.inputNames);
+        console.log("[OnnxTurnDetector] Output names:", this.session.outputNames);
+      }
+    } catch (error) {
+      this.initFailed = true;
+      console.warn(
+        "[OnnxTurnDetector] Initialization failed, using heuristic fallback:",
+        error
+      );
+      await this.heuristicFallback.init();
+    }
+  }
+  /**
+   * Predict if the current utterance is complete
    */
   async predict(context) {
-    if (!this.initialized) {
+    if (!this.initialized && !this.initFailed) {
       await this.init();
     }
-    const { transcript, silenceDurationMs, vadProbability, sttConfidence } = context;
-    const trimmed = transcript.trim();
-    if (trimmed.length < 3) {
-      return {
-        shouldCommit: false,
-        confidence: 0.9,
-        reason: "incomplete"
-      };
+    if (this.initFailed || !this.session || !this.tokenizer) {
+      return this.heuristicFallback.predict(context);
     }
-    if (vadProbability > 0.7) {
-      return {
-        shouldCommit: false,
-        confidence: 0.7,
-        reason: "incomplete"
+    try {
+      const startTime = performance.now();
+      const history = this.conversationHistory.map((t) => ({
+        role: t.role,
+        content: t.text
+      }));
+      const tokenIds = this.tokenizer.encodeForTurnDetection(
+        context.transcript,
+        history
+      );
+      const truncatedIds = tokenIds.slice(-this.onnxConfig.maxSeqLength);
+      const inputTensor = new ort.Tensor(
+        "int64",
+        BigInt64Array.from(truncatedIds.map(BigInt)),
+        [1, truncatedIds.length]
+      );
+      const attentionMask = new ort.Tensor(
+        "int64",
+        BigInt64Array.from(truncatedIds.map(() => BigInt(1))),
+        [1, truncatedIds.length]
+      );
+      const feeds = {
+        input_ids: inputTensor,
+        attention_mask: attentionMask
       };
-    }
-    if (/[.!?]$/.test(trimmed) && silenceDurationMs > 500) {
+      const results = await this.session.run(feeds);
+      const logits = this.extractLogits(results);
+      const probabilities = this.softmax(logits);
+      const eotProbability = probabilities[1] ?? 0;
+      const latencyMs = performance.now() - startTime;
+      if (this.config.debug) {
+        console.log(`[OnnxTurnDetector] Inference: ${latencyMs.toFixed(1)}ms`);
+        console.log(`[OnnxTurnDetector] EOT probability: ${(eotProbability * 100).toFixed(1)}%`);
+      }
+      const shouldCommit = eotProbability > this.onnxConfig.eotThreshold;
       return {
-        shouldCommit: true,
-        confidence: 0.9,
-        reason: "model_prediction"
+        shouldCommit,
+        confidence: shouldCommit ? eotProbability : 1 - eotProbability,
+        reason: shouldCommit ? "model_prediction" : "incomplete"
       };
+    } catch (error) {
+      console.warn("[OnnxTurnDetector] Inference failed:", error);
+      return this.heuristicFallback.predict(context);
     }
-    if (silenceDurationMs > 1e3 && sttConfidence > 0.8) {
-      return {
-        shouldCommit: true,
-        confidence: 0.8,
-        reason: "long_silence"
-      };
-    }
-    return {
-      shouldCommit: false,
-      confidence: 0.6,
-      reason: "incomplete"
-    };
   }
+  /**
+   * Add a completed turn to conversation history
+   */
   addTurn(turn) {
-    this.history.push(turn);
-    if (this.history.length > (this.config.maxContextTurns || 4)) {
-      this.history.shift();
+    this.conversationHistory.push(turn);
+    if (this.conversationHistory.length > (this.config.maxContextTurns || 4)) {
+      this.conversationHistory.shift();
     }
+    this.heuristicFallback.addTurn(turn);
   }
+  /**
+   * Reset state
+   */
   reset() {
-    this.history = [];
+    this.conversationHistory = [];
+    this.heuristicFallback.reset();
   }
+  /**
+   * Cleanup resources
+   */
   destroy() {
     this.reset();
+    this.session?.release();
+    this.session = null;
+    this.tokenizer = null;
     this.initialized = false;
+    this.initPromise = null;
+    this.modelCache.close();
+    this.heuristicFallback.destroy();
+  }
+  // =========================================================================
+  // Helper methods
+  // =========================================================================
+  /**
+   * Extract logits from ONNX output
+   * Handles different model output formats
+   */
+  extractLogits(results) {
+    const outputNames = ["logits", "output", "probabilities"];
+    let outputTensor = null;
+    for (const name of outputNames) {
+      if (results[name]) {
+        outputTensor = results[name];
+        break;
+      }
+    }
+    if (!outputTensor) {
+      const keys = Object.keys(results);
+      if (keys.length > 0) {
+        outputTensor = results[keys[0]];
+      }
+    }
+    if (!outputTensor) {
+      throw new Error("No output tensor found");
+    }
+    const data = outputTensor.data;
+    if (data instanceof Float32Array || data instanceof Float64Array) {
+      if (outputTensor.dims.length === 3) {
+        const seqLen = outputTensor.dims[1];
+        const vocabSize = outputTensor.dims[2];
+        const startIdx = (seqLen - 1) * vocabSize;
+        return [data[startIdx], data[startIdx + 1]];
+      } else if (outputTensor.dims.length === 2) {
+        return [data[0], data[1]];
+      }
+    }
+    return [Number(data[0]), Number(data[1])];
+  }
+  /**
+   * Apply softmax to logits
+   */
+  softmax(logits) {
+    const maxLogit = Math.max(...logits);
+    const exps = logits.map((x) => Math.exp(x - maxLogit));
+    const sum = exps.reduce((a, b) => a + b, 0);
+    return exps.map((x) => x / sum);
+  }
+  // =========================================================================
+  // Getters for testing/debugging
+  // =========================================================================
+  /**
+   * Check if using fallback
+   */
+  get isUsingFallback() {
+    return this.initFailed || !this.session;
+  }
+  /**
+   * Get conversation history
+   */
+  getHistory() {
+    return [...this.conversationHistory];
   }
 };
 function createOnnxTurnDetector(options) {
@@ -977,6 +1783,38 @@ var FetchHttpClient = class {
 };
 function createFetchHttpClient(config2) {
   return new FetchHttpClient(config2);
+}
+
+// src/adapters/utils/device-capability.ts
+function detectDeviceCapabilities() {
+  const isBrowser = typeof window !== "undefined" && typeof navigator !== "undefined";
+  if (!isBrowser) {
+    return {
+      canRunLocalOnnx: false,
+      deviceMemoryGB: null,
+      hasWebAssembly: false,
+      hasIndexedDB: false,
+      isMobile: false,
+      hardwareConcurrency: null
+    };
+  }
+  const nav = navigator;
+  const deviceMemoryGB = nav.deviceMemory ?? null;
+  const hasWebAssembly = typeof WebAssembly !== "undefined" && typeof WebAssembly.instantiate === "function";
+  const hasIndexedDB = "indexedDB" in window;
+  const isMobile2 = /iPhone|iPad|iPod|Android|webOS|BlackBerry|IEMobile|Opera Mini/i.test(
+    nav.userAgent
+  );
+  const hardwareConcurrency = nav.hardwareConcurrency ?? null;
+  const canRunLocalOnnx = !isMobile2 && hasWebAssembly && hasIndexedDB && (deviceMemoryGB === null || deviceMemoryGB >= 4);
+  return {
+    canRunLocalOnnx,
+    deviceMemoryGB,
+    hasWebAssembly,
+    hasIndexedDB,
+    isMobile: isMobile2,
+    hardwareConcurrency
+  };
 }
 
 // src/core/trigger-detector.ts
@@ -1808,16 +2646,21 @@ async function waitForPlaybackComplete() {
     checkComplete();
   });
 }
-async function speakTextStreaming(text, locale = "fr", onStart, onEnd, onError, ttsModel, voice) {
+async function speakTextStreaming(text, locale = "fr", onStart, onEnd, onError, ttsModel, voice, ttsStreamUrl, apiKey) {
   stopStreamingTTS();
   shouldStopStream = false;
   isStreamPlaying = true;
   pendingBytes = null;
   const ctx = getAudioContext();
+  const url = ttsStreamUrl || config.ttsStreamUrl;
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
   try {
-    const response = await fetch(config.ttsStreamUrl, {
+    const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ text, locale, ttsModel, voice })
     });
     if (!response.ok) {
@@ -1859,12 +2702,12 @@ async function speakTextStreaming(text, locale = "fr", onStart, onEnd, onError, 
     pendingBytes = null;
   }
 }
-function speakTextStreamingWithCallback(text, locale = "fr", onEnd, onError, ttsModel, voice) {
-  speakTextStreaming(text, locale, void 0, onEnd, onError, ttsModel, voice).catch((err) => {
+function speakTextStreamingWithCallback(text, locale = "fr", onEnd, onError, ttsModel, voice, ttsStreamUrl, apiKey) {
+  speakTextStreaming(text, locale, void 0, onEnd, onError, ttsModel, voice, ttsStreamUrl, apiKey).catch((err) => {
     onError?.(err instanceof Error ? err : new Error("Streaming TTS failed"));
   });
 }
-async function prefetchAudio(text, locale = "fr", ttsModel, voice) {
+async function prefetchAudio(text, locale = "fr", ttsModel, voice, ttsStreamUrl, apiKey) {
   const abortController = new AbortController();
   const preloaded = {
     chunks: [],
@@ -1872,10 +2715,15 @@ async function prefetchAudio(text, locale = "fr", ttsModel, voice) {
     abortController,
     isComplete: false
   };
+  const url = ttsStreamUrl || config.ttsStreamUrl;
+  const headers = { "Content-Type": "application/json" };
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
   try {
-    const response = await fetch(config.ttsStreamUrl, {
+    const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({ text, locale, ttsModel, voice }),
       signal: abortController.signal
     });
@@ -2310,7 +3158,7 @@ function createSentenceAccumulator(onSentence, options) {
 
 // src/core/tts-queue.ts
 function createTTSQueue(options) {
-  const { locale, voice, onStart, onEnd, onError, debug = false } = options;
+  const { locale, voice, ttsStreamUrl, apiKey, onStart, onEnd, onError, debug = false } = options;
   const queue = [];
   let isPlaying = false;
   let isFinished = false;
@@ -2345,7 +3193,7 @@ function createTTSQueue(options) {
     isPrefetching = true;
     nextItem = item;
     log("Prefetching N+1:", item.text.substring(0, 40) + "...", item.ttsModel ? `(${item.ttsModel})` : "");
-    prefetchAudio(item.text, locale, item.ttsModel, voice).then((preloaded) => {
+    prefetchAudio(item.text, locale, item.ttsModel, voice, ttsStreamUrl, apiKey).then((preloaded) => {
       isPrefetching = false;
       if (isCancelled) {
         cancelPrefetch(preloaded);
@@ -2376,7 +3224,7 @@ function createTTSQueue(options) {
       const key = `${item.text}-${item.ttsModel || "default"}`;
       extendedPrefetchPending.add(key);
       log("Prefetching N+2/3:", item.text.substring(0, 30) + "...");
-      prefetchAudio(item.text, locale, item.ttsModel, voice).then((preloaded) => {
+      prefetchAudio(item.text, locale, item.ttsModel, voice, ttsStreamUrl, apiKey).then((preloaded) => {
         extendedPrefetchPending.delete(key);
         if (isCancelled) {
           cancelPrefetch(preloaded);
@@ -2458,7 +3306,9 @@ function createTTSQueue(options) {
           }
         },
         item.ttsModel,
-        voice
+        voice,
+        ttsStreamUrl,
+        apiKey
       );
     } catch (err) {
       isPlaying = false;
@@ -2689,7 +3539,7 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
 }
 registerProcessor("audio-capture-processor", AudioCaptureProcessor);
 `;
-var WORKLET_VERSION = "0.4.1";
+var WORKLET_VERSION = "0.5.0";
 
 // src/core/worklet-loader.ts
 var CDN_BASE_URL = "https://kond.studio/sdk/voicekit";
@@ -2761,99 +3611,6 @@ To fix this, choose one of these options:
 
 CDN Error: ${cdnError instanceof Error ? cdnError.message : String(cdnError)}`
     );
-  }
-}
-
-// src/config/defaults.ts
-var ENVIRONMENTS = {
-  production: {
-    baseUrl: "https://kond.studio/api/voice/v1"
-  },
-  staging: {
-    baseUrl: "https://staging.kond.studio/api/voice/v1"
-  },
-  development: {
-    baseUrl: "http://localhost:3000/api/voice/v1"
-  }
-};
-var ENDPOINTS = {
-  /** Token exchange endpoint */
-  token: "/token",
-  /** Turn detection API */
-  turnDetect: "/turn-detect",
-  /** TTS streaming endpoint */
-  ttsStream: "/tts/stream"
-};
-var VOICE_PRESETS = {
-  "marie-fr": "9BWtsMINqrJLrRacOk9x",
-  // ElevenLabs voice ID
-  "thomas-fr": "ThT5KcBeYPX3keUQqHPh",
-  "emma-en": "21m00Tcm4TlvDq8ikWAM",
-  "james-en": "JBFqnCBsd6RMkjVDRZzb"
-};
-var DEFAULTS = {
-  /** Default base URL for API calls (production) */
-  baseUrl: "https://kond.studio/api/voice/v1",
-  /** Default locale */
-  locale: "fr",
-  /** Default worklet URL */
-  workletUrl: "/audio-processor.worklet.js",
-  /** Turn detection defaults */
-  turnDetection: {
-    type: "auto",
-    confidenceThreshold: 0.7,
-    silenceTimeoutMs: 1200,
-    detectBackchannels: true
-  },
-  /** TTS defaults */
-  tts: {
-    speed: 1
-  },
-  /** Internal timing */
-  timing: {
-    cooldownMs: 150,
-    gracePeriodMs: 2e3,
-    maxSilenceMs: 2500
-  },
-  /** Debug mode */
-  debug: false
-};
-function getEnvironmentConfig(env) {
-  if (env && env in ENVIRONMENTS) {
-    return ENVIRONMENTS[env];
-  }
-  if (typeof process !== "undefined" && process.env?.NODE_ENV) {
-    const nodeEnv = process.env.NODE_ENV;
-    if (nodeEnv in ENVIRONMENTS) {
-      return ENVIRONMENTS[nodeEnv];
-    }
-  }
-  return ENVIRONMENTS.production;
-}
-function buildEndpointUrl(baseUrl, endpoint) {
-  const base = baseUrl.replace(/\/$/, "");
-  return `${base}${ENDPOINTS[endpoint]}`;
-}
-function resolveVoiceId(voice) {
-  if (voice in VOICE_PRESETS) {
-    return VOICE_PRESETS[voice];
-  }
-  return voice;
-}
-function validateSecureUrl(baseUrl, debug) {
-  const isProduction = typeof process !== "undefined" && process.env?.NODE_ENV === "production";
-  const isLocalhost = baseUrl.includes("localhost") || baseUrl.includes("127.0.0.1");
-  const isHttps = baseUrl.startsWith("https://");
-  if (!isHttps && !isLocalhost) {
-    if (isProduction) {
-      throw new Error(
-        `[VoiceKit] Security: HTTPS is required in production. Got: ${baseUrl.substring(0, 50)}`
-      );
-    } else if (debug) {
-      console.warn(
-        `[VoiceKit] Security warning: Using HTTP in non-production. Consider using HTTPS for ${baseUrl.substring(0, 50)}`
-      );
-    }
   }
 }
 
@@ -2989,6 +3746,15 @@ var VoiceKit = class {
   }
   /**
    * Create the appropriate turn detector based on type
+   *
+   * Strategy:
+   * - "local" / "onnx": Force local ONNX inference (desktop only)
+   * - "cloud": Force cloud API inference
+   * - "heuristic": Fast regex-based fallback
+   * - "auto" (default): Device capability detection:
+   *   - Desktop with 4GB+ RAM → local ONNX
+   *   - Mobile or low memory → cloud API
+   *   - No auth → heuristic fallback
    */
   async createTurnDetector(type) {
     const baseConfig = {
@@ -3005,21 +3771,68 @@ var VoiceKit = class {
       // Pass through for dev/staging
       onQuotaExceeded: this.config.onQuotaExceeded
     };
-    const hasCloudAuth = this.config.apiKey || this.config.token;
+    const hasCloudAuth = !!(this.config.apiKey || this.config.token);
     switch (type) {
-      case "cloud":
-        return createCloudTurnDetector(cloudOptions);
+      case "local":
       case "onnx":
+        if (this.config.debug) {
+          console.log("[VoiceKit] Using local ONNX turn detector");
+        }
         return createOnnxTurnDetector(baseConfig);
+      case "cloud":
+        if (this.config.debug) {
+          console.log("[VoiceKit] Using cloud turn detector");
+        }
+        return createCloudTurnDetector(cloudOptions);
       case "heuristic":
+        if (this.config.debug) {
+          console.log("[VoiceKit] Using heuristic turn detector");
+        }
         return createHeuristicTurnDetector(baseConfig);
       case "auto":
       default:
-        if (hasCloudAuth) {
-          return createCloudTurnDetector(cloudOptions);
-        }
-        return createHeuristicTurnDetector(baseConfig);
+        return this.createAutoTurnDetector(baseConfig, cloudOptions, hasCloudAuth);
     }
+  }
+  /**
+   * Auto-select turn detector based on device capabilities
+   *
+   * Decision tree:
+   * 1. Can run local ONNX? (desktop with 4GB+ RAM, WebAssembly, IndexedDB)
+   *    → Use local ONNX for fastest latency
+   * 2. Has cloud auth? (apiKey or token)
+   *    → Use cloud API
+   * 3. No auth?
+   *    → Fall back to heuristic
+   */
+  createAutoTurnDetector(baseConfig, cloudOptions, hasCloudAuth) {
+    const capabilities = detectDeviceCapabilities();
+    if (this.config.debug) {
+      console.log("[VoiceKit] Device capabilities:", {
+        canRunLocalOnnx: capabilities.canRunLocalOnnx,
+        isMobile: capabilities.isMobile,
+        deviceMemoryGB: capabilities.deviceMemoryGB,
+        hasWebAssembly: capabilities.hasWebAssembly,
+        hasIndexedDB: capabilities.hasIndexedDB
+      });
+    }
+    if (capabilities.canRunLocalOnnx) {
+      if (this.config.debug) {
+        console.log("[VoiceKit] Auto: Using local ONNX turn detector (capable device)");
+      }
+      return createOnnxTurnDetector(baseConfig);
+    }
+    if (hasCloudAuth) {
+      const reason = capabilities.isMobile ? "mobile device" : "low memory/no WASM support";
+      if (this.config.debug) {
+        console.log(`[VoiceKit] Auto: Using cloud turn detector (${reason})`);
+      }
+      return createCloudTurnDetector(cloudOptions);
+    }
+    if (this.config.debug) {
+      console.log("[VoiceKit] Auto: Using heuristic turn detector (no auth, can't run local)");
+    }
+    return createHeuristicTurnDetector(baseConfig);
   }
   /**
    * Start listening for voice input
@@ -3123,8 +3936,16 @@ var VoiceKit = class {
   speak(text) {
     if (!text || text.trim().length === 0) return;
     if (!this.ttsQueue) {
+      const ttsStreamUrl = buildEndpointUrl(
+        this.config.baseUrl || DEFAULTS.baseUrl,
+        "ttsStream"
+      );
       this.ttsQueue = createTTSQueue({
         locale: this.locale,
+        ttsStreamUrl,
+        // Pass explicit URL to avoid localhost resolution
+        apiKey: this.config.apiKey,
+        // Pass API key for authentication
         onStart: () => this.setState("speaking"),
         onEnd: () => {
           this.ttsQueue = null;

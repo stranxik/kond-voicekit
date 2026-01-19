@@ -1,6 +1,6 @@
 {
   "name": "@kond.studio/voicekit",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Voice SDK for AI agents - STT, TTS, Turn Detection",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -45,7 +45,8 @@
     }
   },
   "dependencies": {
-    "@ricky0123/vad-web": "^0.0.30"
+    "@ricky0123/vad-web": "^0.0.30",
+    "onnxruntime-web": "^1.21.0"
   },
   "devDependencies": {
     "@types/react": "^19",

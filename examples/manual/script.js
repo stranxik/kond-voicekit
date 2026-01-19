@@ -278,9 +278,17 @@ async function handleTranscript(text) {
 async function initVoiceKit() {
   try {
     // Create VoiceKit instance with real SDK
+    // Turn detection modes:
+    //   - "auto" (default): Desktop (4GB+ RAM) → local ONNX, Mobile → cloud
+    //   - "local": Force local ONNX inference (~25-50ms)
+    //   - "cloud": Force cloud API (~100-200ms)
+    //   - "heuristic": Fast regex fallback (~1-5ms, offline-friendly)
     voice = new VoiceKit({
       apiKey: VOICEKIT_API_KEY,
       locale: "en",
+      // turnDetection: { type: "auto" }, // Default - auto-selects based on device
+      // turnDetection: { type: "local" }, // Force local ONNX for lowest latency
+      // turnDetection: { type: "heuristic" }, // Offline mode
       onTranscript: handleTranscript,
       onStateChange: (state) => {
         updateStatus(state);

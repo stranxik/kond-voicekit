@@ -85,6 +85,29 @@ export const DEFAULTS = {
 };
 
 /**
+ * ONNX Turn Detector defaults
+ *
+ * Model: LiveKit turn-detector (SmolLM2-135M based)
+ * Hosted on HuggingFace for reliability and CDN distribution
+ */
+export const ONNX_DEFAULTS = {
+  /** ONNX model file (quantized INT8 for smaller size) */
+  modelUrl: "https://huggingface.co/livekit/turn-detector/resolve/main/onnx/model_q8.onnx",
+  /** Tokenizer config file */
+  tokenizerUrl: "https://huggingface.co/livekit/turn-detector/resolve/main/tokenizer.json",
+  /** Model version for cache invalidation */
+  modelVersion: "1.2.0",
+  /** Enable IndexedDB caching */
+  enableCache: true,
+  /** ONNX execution provider */
+  executionProvider: "wasm" as const,
+  /** EOT probability threshold (0.6 = 60% confidence for end-of-turn) */
+  eotThreshold: 0.6,
+  /** Maximum input sequence length */
+  maxSeqLength: 512,
+};
+
+/**
  * Get environment config by name or detection
  */
 export function getEnvironmentConfig(env?: string): EnvironmentConfig {

@@ -1,7 +1,7 @@
 # kond - voicekit SDK
 
 > **"Donnez de la voix à votre agent IA"**
-> `@kond/voicekit` - SDK vocal pour agents IA
+> `@kond.studio/voicekit` - SDK vocal pour agents IA
 
 ---
 
@@ -124,7 +124,7 @@ VoiceKit est **framework-agnostic** côté backend. Exemples compatibles :
 ## API Actuelle (Self-Hosted)
 
 ```typescript
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 
 const voice = new VoiceKit({
   // Auth (vous fournissez votre système d'auth)
@@ -155,7 +155,7 @@ await voice.start();
 ### React Hook (Self-Hosted)
 
 ```tsx
-import { useVoiceKit } from '@kond/voicekit/react';
+import { useVoiceKit } from '@kond.studio/voicekit/react';
 
 const MyVoiceComponent = () => {
   const voice = useVoiceKit({
@@ -185,7 +185,7 @@ import {
   useLLMIntegration,
   useSileroVAD,
   useTurnDetector,
-} from '@kond/voicekit/react';
+} from '@kond.studio/voicekit/react';
 
 // Build your own voice pipeline
 const audio = useAudioSetup({ debug: true });
@@ -220,13 +220,13 @@ Développeur veut faire parler son agent
 = 2-3 mois de dev, expertise audio, bugs subtils
 ```
 
-### La solution @kond/voicekit (Managed - Roadmap)
+### La solution @kond.studio/voicekit (Managed - Roadmap)
 
 > ⚠️ Cette API avec `apiKey` n'est pas encore disponible. Voir "API Actuelle" ci-dessus.
 
 ```typescript
 // ROADMAP - API managed service (pas encore disponible)
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 
 const voice = new VoiceKit({
   apiKey: process.env.KOND_API_KEY,  // Une seule clé (roadmap)
@@ -271,7 +271,7 @@ Le dev n'aura qu'à brancher son LLM.
 
 ```typescript
 // ROADMAP - API managed service
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 import { ChatAnthropic } from '@langchain/anthropic';
 
 const tutor = new ChatAnthropic({ modelName: 'claude-sonnet-4-20250514' });
@@ -316,7 +316,7 @@ Transformer le pipeline vocal KOND en SDK plug-and-play que d'autres développeu
 ┌─────────────────────────────────────────────────────────────────┐
 │  Développeur avec son Agent IA (Claude, GPT, etc.)              │
 │                                                                  │
-│  import { VoiceKit } from '@kond/voicekit'                      │
+│  import { VoiceKit } from '@kond.studio/voicekit'                      │
 │                                                                  │
 │  const voice = new VoiceKit({                                   │
 │    onTranscript: (text) => agent.chat(text),  // Son LLM        │
@@ -363,7 +363,7 @@ Transformer le pipeline vocal KOND en SDK plug-and-play que d'autres développeu
 ### Structure de package
 
 ```
-@kond/voicekit/
+@kond.studio/voicekit/
 ├── core/
 │   ├── turn-manager.ts        # Signal fusion engine
 │   ├── tts-queue.ts           # Sentence queue + prefetch
@@ -400,7 +400,7 @@ Transformer le pipeline vocal KOND en SDK plug-and-play que d'autres développeu
 #### API Actuelle (Self-Hosted) ✅
 
 ```typescript
-// @kond/voicekit - DISPONIBLE MAINTENANT
+// @kond.studio/voicekit - DISPONIBLE MAINTENANT
 
 interface VoiceKitConfig {
   // Auth (vous fournissez)
@@ -430,7 +430,7 @@ interface VoiceKitConfig {
 #### API Managed (Roadmap) 🗓️
 
 ```typescript
-// @kond/voicekit - ROADMAP (pas encore disponible)
+// @kond.studio/voicekit - ROADMAP (pas encore disponible)
 
 interface VoiceKitConfig {
   // Authentification (une seule clé)
@@ -548,7 +548,7 @@ const VOICE_PRESETS = {
 ### Exemple d'utilisation (Self-Hosted - Disponible) ✅
 
 ```typescript
-import { VoiceKit } from '@kond/voicekit';
+import { VoiceKit } from '@kond.studio/voicekit';
 import Anthropic from '@anthropic-ai/sdk';
 
 const anthropic = new Anthropic();
@@ -639,7 +639,7 @@ SDK PAYANT - TOUT INCLUS
 
 PRICING
 ───────
-🆓 Free tier: 100 min/mois (pour tester)
+🆓 Free tier: 10 min/mois (pour tester)
 💰 Puis: $0.05/min
 
 ÉCONOMIE
@@ -768,11 +768,11 @@ CREATE INDEX idx_vk_usage_user ON vk_usage(user_id, month);
 1. SIGNUP
    └── User crée compte kond.studio/voicekit (Stack Auth)
    └── Génère API key → vk_api_keys
-   └── Free tier: 100 min/mois
+   └── Free tier: 10 min/mois
 
 2. VALIDATION (chaque requête SDK)
    └── Hash API key → lookup vk_api_keys
-   └── Check vk_usage.minutes_used < 100 (ou user paid)
+   └── Check vk_usage.minutes_used < 10 (ou user paid)
    └── Si exceeded: return 402
 
 3. USAGE TRACKING (fin de session)
@@ -947,10 +947,10 @@ Authentification via API key (pas JWT KOND).
 ### Notre différenciation
 
 ```
-@kond/voicekit
+@kond.studio/voicekit
 
 ✅ UNE clé API → tout fonctionne (pas 3 comptes à créer)
-✅ Free tier 100 min/mois → payant ensuite ($0.05/min)
+✅ Free tier 10 min/mois → payant ensuite ($0.05/min)
 ✅ Turn Detection ML inclus (LiveKit ONNX, client-side)
 ✅ Heuristics FR/EN pour backchannels ("mh", "ouais", "ok")
 ✅ TTS Queue + Prefetching (gapless audio)
@@ -1019,7 +1019,7 @@ Si on décide de lancer :
 ### Roadmap 🗓️
 
 **Service Managed** (une seule clé API, tout inclus) :
-- Free tier : 100 min/mois
+- Free tier : 10 min/mois
 - Puis : $0.05/min
 - Voix ElevenLabs au choix
 - Turn Detection ML inclus

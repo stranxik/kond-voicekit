@@ -8,6 +8,7 @@ export type {
   TraceEvent,
   VoiceKitError,
   VoiceKitConfig,
+  TurnDetectorType,
 } from "./config";
 
 export { DEFAULT_CONFIG } from "./config";

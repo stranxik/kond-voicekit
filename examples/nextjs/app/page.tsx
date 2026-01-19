@@ -95,6 +95,8 @@ export default function VoiceKitDemo() {
     apiKey: config.voicekit.apiKey,
     locale: config.voicekit.locale,
     voice: config.voicekit.voiceId || undefined,
+    // Turn detection: "auto" (default), "local" (ONNX), "cloud", or "heuristic"
+    turnDetection: { type: config.voicekit.turnDetectorType },
     onTranscript: handleTranscript,
   });
 

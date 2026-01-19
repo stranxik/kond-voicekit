@@ -11,6 +11,15 @@
  */
 type Locale = "fr" | "en" | "multi";
 /**
+ * Turn detector type
+ * - "auto": Automatic selection (ONNX on capable desktops, cloud otherwise)
+ * - "local": Force local ONNX inference (~25-50ms latency)
+ * - "cloud": Force cloud API inference (~100-200ms latency)
+ * - "heuristic": Fast regex-based fallback (~1ms, no ML)
+ * - "onnx": Alias for "local"
+ */
+type TurnDetectorType = "auto" | "local" | "cloud" | "heuristic" | "onnx";
+/**
  * Conversation state machine states
  */
 type ConversationState = "idle" | "connecting" | "listening" | "vad_cooldown" | "triggered" | "streaming" | "processing" | "speaking" | "cooldown";
@@ -58,7 +67,7 @@ interface VoiceKitConfig {
     /**
      * VoiceKit API key (vk_xxx)
      * Get your key at: https://kond.studio/developers/voicekit/keys
-     * Free tier: 100 min/month
+     * Free tier: 10 min/month
      *
      * Either `apiKey` OR `token`+`tokenWsUrl` is required.
      */
@@ -123,8 +132,16 @@ interface VoiceKitConfig {
      * Turn detection tuning
      */
     turnDetection?: {
-        /** Force specific turn detector type @default "auto" */
-        type?: "auto" | "cloud" | "onnx" | "heuristic";
+        /**
+         * Turn detector type
+         * - "auto" (default): Uses local ONNX on capable desktops, cloud on mobile/low-memory
+         * - "local": Force local ONNX inference (desktop only, ~25-50ms latency)
+         * - "cloud": Force cloud API (~100-200ms latency, works everywhere)
+         * - "heuristic": Fast regex-based fallback (~1ms, no ML)
+         * - "onnx": Alias for "local"
+         * @default "auto"
+         */
+        type?: TurnDetectorType;
         /** Minimum confidence to commit turn (0-1) @default 0.7 */
         confidenceThreshold?: number;
         /** Silence timeout before committing (ms) @default 1200 */
@@ -646,8 +663,29 @@ declare class VoiceKit {
     init(): Promise<void>;
     /**
      * Create the appropriate turn detector based on type
+     *
+     * Strategy:
+     * - "local" / "onnx": Force local ONNX inference (desktop only)
+     * - "cloud": Force cloud API inference
+     * - "heuristic": Fast regex-based fallback
+     * - "auto" (default): Device capability detection:
+     *   - Desktop with 4GB+ RAM → local ONNX
+     *   - Mobile or low memory → cloud API
+     *   - No auth → heuristic fallback
      */
     private createTurnDetector;
+    /**
+     * Auto-select turn detector based on device capabilities
+     *
+     * Decision tree:
+     * 1. Can run local ONNX? (desktop with 4GB+ RAM, WebAssembly, IndexedDB)
+     *    → Use local ONNX for fastest latency
+     * 2. Has cloud auth? (apiKey or token)
+     *    → Use cloud API
+     * 3. No auth?
+     *    → Fall back to heuristic
+     */
+    private createAutoTurnDetector;
     /**
      * Start listening for voice input
      */
@@ -1330,12 +1368,14 @@ declare function isStreamingTTSPlaying(): boolean;
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
  * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
+ * @param ttsStreamUrl Optional explicit TTS endpoint URL (overrides global config)
+ * @param apiKey Optional API key for authentication
  */
-declare function speakTextStreaming(text: string, locale?: Locale, onStart?: () => void, onEnd?: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel, voice?: string): Promise<void>;
+declare function speakTextStreaming(text: string, locale?: Locale, onStart?: () => void, onEnd?: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel, voice?: string, ttsStreamUrl?: string, apiKey?: string): Promise<void>;
 /**
  * Speak text with callback (wrapper for voice conversation)
  */
-declare function speakTextStreamingWithCallback(text: string, locale: Locale | undefined, onEnd: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel, voice?: string): void;
+declare function speakTextStreamingWithCallback(text: string, locale: Locale | undefined, onEnd: () => void, onError?: (error: Error) => void, ttsModel?: TtsModel, voice?: string, ttsStreamUrl?: string, apiKey?: string): void;
 /**
  * Pre-fetch audio without playing
  * Returns a PreloadedAudio object that can be played later with playPreloadedAudio()
@@ -1346,8 +1386,10 @@ declare function speakTextStreamingWithCallback(text: string, locale: Locale | u
  *
  * @param ttsModel Optional TTS model override (defaults to server-side routing)
  * @param voice Optional ElevenLabs voice ID (defaults to locale-based selection)
+ * @param ttsStreamUrl Optional explicit TTS endpoint URL (overrides global config)
+ * @param apiKey Optional API key for authentication
  */
-declare function prefetchAudio(text: string, locale?: Locale, ttsModel?: TtsModel, voice?: string): Promise<PreloadedAudio>;
+declare function prefetchAudio(text: string, locale?: Locale, ttsModel?: TtsModel, voice?: string, ttsStreamUrl?: string, apiKey?: string): Promise<PreloadedAudio>;
 /**
  * Cancel a pre-fetch in progress
  */
@@ -1426,6 +1468,10 @@ interface TTSQueueOptions {
     locale: Locale;
     /** ElevenLabs voice ID (optional, defaults to locale-based selection) */
     voice?: string;
+    /** Explicit TTS stream endpoint URL (overrides global config) */
+    ttsStreamUrl?: string;
+    /** API key for authentication */
+    apiKey?: string;
     onStart?: () => void;
     onEnd?: () => void;
     onError?: (error: Error) => void;
@@ -1839,54 +1885,96 @@ declare class HeuristicTurnDetector implements TurnDetectorProvider {
 declare function createHeuristicTurnDetector(options?: HeuristicTurnDetectorOptions): TurnDetectorProvider;
 
 /**
- * ONNX Turn Detector (STUB)
- * Local ML model via ONNX.js for powerful devices
+ * ONNX Turn Detector
  *
- * This is a stub implementation. The full implementation requires:
- * - ONNX.js or onnxruntime-web package
- * - SmolLM2-135M model converted to ONNX format
- * - Model hosted on CDN or bundled
+ * Local ML turn detection using ONNX runtime in the browser.
+ * Uses the LiveKit turn-detector model (SmolLM2-135M based) for:
+ * - End-of-turn prediction
+ * - Semantic understanding of utterance completion
  *
- * Architecture:
- * 1. Load model from CDN/cache (~100MB first load, cached in IndexedDB)
- * 2. Process transcript with conversation context
- * 3. Return turn prediction with ~10ms latency
+ * Features:
+ * - ~25-50ms inference latency (vs ~100-200ms cloud)
+ * - IndexedDB caching (~100ms load after first download)
+ * - Automatic fallback to heuristic on failure
+ * - Works offline after initial model download
  *
  * @see https://github.com/livekit/agents for reference implementation
  */
 
 interface OnnxTurnDetectorOptions extends TurnDetectorConfig {
-    /** Model URL (default: CDN-hosted SmolLM2) */
+    /** URL to the ONNX model file */
     modelUrl?: string;
+    /** URL to the tokenizer.json file */
+    tokenizerUrl?: string;
+    /** Model version for cache invalidation */
+    modelVersion?: string;
     /** Enable model caching in IndexedDB */
     enableCache?: boolean;
-    /** WASM execution provider (cpu, wasm, webgl) */
-    executionProvider?: "cpu" | "wasm" | "webgl";
+    /** ONNX execution provider */
+    executionProvider?: "wasm" | "cpu";
+    /** Probability threshold for EOT prediction */
+    eotThreshold?: number;
+    /** Maximum input sequence length */
+    maxSeqLength?: number;
 }
 /**
  * ONNX Turn Detector
  *
- * STUB IMPLEMENTATION - Full implementation pending:
- * 1. Install onnxruntime-web: pnpm add onnxruntime-web
- * 2. Host SmolLM2-135M ONNX model
- * 3. Implement inference pipeline
+ * Runs the turn-detector model locally in the browser using ONNX runtime.
+ * Automatically falls back to heuristic detection on init or predict failure.
  */
 declare class OnnxTurnDetector implements TurnDetectorProvider {
     readonly name = "onnx";
     private config;
-    private options;
-    private history;
+    private onnxConfig;
+    private session;
+    private tokenizer;
+    private modelCache;
+    private heuristicFallback;
+    private conversationHistory;
     private initialized;
+    private initPromise;
+    private initFailed;
     constructor(options?: OnnxTurnDetectorOptions);
-    init(): Promise<void>;
     /**
-     * STUB: Returns heuristic-based prediction
-     * Full implementation would run ONNX inference
+     * Initialize the ONNX session and tokenizer
+     * Downloads and caches model on first load
+     */
+    init(): Promise<void>;
+    private doInit;
+    /**
+     * Predict if the current utterance is complete
      */
     predict(context: TurnContext): Promise<TurnPrediction>;
+    /**
+     * Add a completed turn to conversation history
+     */
     addTurn(turn: ConversationTurn): void;
+    /**
+     * Reset state
+     */
     reset(): void;
+    /**
+     * Cleanup resources
+     */
     destroy(): void;
+    /**
+     * Extract logits from ONNX output
+     * Handles different model output formats
+     */
+    private extractLogits;
+    /**
+     * Apply softmax to logits
+     */
+    private softmax;
+    /**
+     * Check if using fallback
+     */
+    get isUsingFallback(): boolean;
+    /**
+     * Get conversation history
+     */
+    getHistory(): ConversationTurn[];
 }
 /**
  * Factory function
