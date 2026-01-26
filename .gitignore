@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (keep dist/ for npm package)
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local env
+.env
+.env.local
+.env*.local
+
+# Test coverage
+coverage/
+
+# Examples dependencies (handled by their own .gitignore)
+examples/*/node_modules/
+examples/*/.next/
+examples/*/dist/
+
+# Internal docs (admin only)
+docs/SDK/
