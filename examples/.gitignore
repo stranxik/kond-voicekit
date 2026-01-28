@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+.next/
+dist/
+
+# Lock files (use parent workspace)
+bun.lock
+package-lock.json
+
+# Local env
+.env.local
+
+# Public assets that are copied
+public/*.onnx
