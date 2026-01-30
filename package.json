@@ -1,0 +1,80 @@
+{
+  "name": "@kond.studio/voicekit",
+  "version": "0.7.0",
+  "description": "Voice SDK for AI agents - STT, TTS, Turn Detection",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.mjs",
+      "require": "./dist/react/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build:worklet": "tsx scripts/embed-worklet.ts",
+    "prebuild": "pnpm build:worklet",
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "framer-motion": "^11.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    },
+    "framer-motion": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@ricky0123/vad-web": "^0.0.30",
+    "onnxruntime-web": "^1.21.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5"
+  },
+  "keywords": [
+    "voice",
+    "speech",
+    "stt",
+    "tts",
+    "ai",
+    "agent",
+    "vad",
+    "turn-detection"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stranxik/kond-voicekit"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "homepage": "https://kond.studio/developers/voicekit",
+  "bugs": {
+    "url": "https://github.com/stranxik/kond-voicekit/issues"
+  }
+}
